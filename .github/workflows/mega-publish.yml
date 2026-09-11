@@ -22,7 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ranges
-          for side in a b; do gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${!side^^_ID}/zip" > "ranges/$side.zip"; done
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$A_ID/zip" > ranges/a.zip
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$B_ID/zip" > ranges/b.zip
           unzip -p ranges/a.zip > ranges/range-a.bin
           unzip -p ranges/b.zip > ranges/range-b.bin
           title=$(unzip -p ranges/a.zip rom-name.txt)
