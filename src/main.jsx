@@ -27,6 +27,12 @@ const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
+function replyText(result) {
+  if (typeof result === "string") return result.trim();
+  if (typeof result?.text === "string") return result.text.trim();
+  return "";
+}
+
 class StepError extends Error {
   constructor(hint, cause) {
     super(hint);
@@ -583,22 +589,22 @@ function App() {
   const [commandLog, setCommandLog] = useState([]);
   const [adb, setAdb] = useState(null),
     [fastboot, setFastboot] = useState(null),
-    [message, setMessage] = useState(""),
     [mockMode, setMockMode] = useState(false);
   const [toast, setToast] = useState(null);
   const [paused, setPaused] = useState(false);
+  const [device, setDevice] = useState(null);
+  const [issued, setIssued] = useState(null);
   const [baseFile, setBaseFile] = useState(null);
   const [twrpFile, setTwrpFile] = useState(null);
   const [romFile, setRomFile] = useState(null);
   const gate = useRef(createGate()).current;
   const toastId = useRef(0);
+  const notify = (text, tone = "info") =>
+    setToast({ text, tone, id: (toastId.current += 1) });
   const showError = (error) => {
     const detail = error?.detail || error?.message || String(error);
     logCommand(`错误 ${detail}`);
-    setToast({
-      text: error?.message || detail,
-      id: (toastId.current += 1),
-    });
+    notify(error?.message || detail, "error");
   };
   const dismissToast = useCallback(() => setToast(null), []);
   const logRef = useRef(null);
@@ -639,17 +645,40 @@ function App() {
     setBusy("");
     setProgress(null);
   };
+  const asSideload = async (action) => {
+    setDevice((d) => (d ? { ...d, mode: "Recovery Sideload" } : d));
+    try {
+      return await action();
+    } finally {
+      setDevice((d) => (d ? { ...d, mode: "Recovery ADB" } : d));
+    }
+  };
   const run = async (command, action) => {
     const id = logCommand(command);
     const started = performance.now();
     const result = await action();
-    const reply = result?.text?.trim();
+    const reply = replyText(result);
     settleCommand(
       id,
       reply || `OKAY [${((performance.now() - started) / 1000).toFixed(2)}s]`,
     );
     return result;
   };
+  useEffect(() => {
+    if (!navigator.usb) return undefined;
+    const onDisconnect = (event) => {
+      setDevice((current) => {
+        if (!current) return current;
+        const serial = event.device?.serialNumber;
+        if (current.serial && serial && current.serial !== serial) return current;
+        setFastboot(null);
+        setAdb(null);
+        return null;
+      });
+    };
+    navigator.usb.addEventListener("disconnect", onDisconnect);
+    return () => navigator.usb.removeEventListener("disconnect", onDisconnect);
+  }, []);
   useEffect(() => {
     fetch(REPO)
       .then((r) => r.json())
@@ -676,9 +705,16 @@ function App() {
           );
         }),
       );
-      await run("fastboot getvar product", () => device.getVariable("product"));
+      const product = await run("fastboot getvar product", () =>
+        device.getVariable("product"),
+      );
       setFastboot(device);
-      setMessage("已连接 fastboot");
+      setDevice({
+        mode: "Fastboot",
+        name: product || device.device?.serialNumber || "",
+        serial: device.device?.serialNumber || "",
+      });
+      notify("已连接 fastboot");
       setStep(1);
     } catch (e) {
       showError(e);
@@ -704,7 +740,7 @@ function App() {
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
       await runFlashScript(fastboot, files, steps, onFlash, run);
-      setMessage(`已执行 ${SCRIPT} 的 ${steps.length} 条命令，设备保持在 fastboot`);
+      notify(`已执行 ${SCRIPT} 的 ${steps.length} 条命令，设备保持在 fastboot`);
       setStep(2);
     } catch (e) {
       showError(e);
@@ -713,7 +749,7 @@ function App() {
     }
   };
   const skipBase = () => {
-    setMessage("已跳过官方底包");
+    notify("已跳过官方底包");
     setStep(2);
   };
   const bootTwrp = async () => {
@@ -737,7 +773,7 @@ function App() {
           }),
         ),
       );
-      setMessage("TWRP 已启动，请等待 ADB");
+      notify("TWRP 已启动，请等待 ADB");
       setStep(3);
       setBusy("等待 ADB");
       const device = await run("adb connect (TWRP)", () =>
@@ -751,14 +787,45 @@ function App() {
             }),
       );
       setAdb(device);
-      setMessage(`已连接 ${device.serial}`);
+      setDevice({
+        mode: "Recovery ADB",
+        name: device.serial || "",
+        serial: device.serial || "",
+      });
+      notify(`已连接 ${device.serial}`);
     } catch (e) {
       showError(e);
     } finally {
       finish();
     }
   };
-  const authorize = async () => {
+  const reconnectAdb = async () => {
+    begin("连接 ADB");
+    try {
+      const next = await run("adb connect", () =>
+        mockMode
+          ? mockAdb()
+          : connectAdb().catch((e) => {
+              throw new StepError(
+                "没有找到 ADB 设备。请确认 TWRP 已在对应模式，并在手机上允许这台电脑调试",
+                e,
+              );
+            }),
+      );
+      setAdb(next);
+      setDevice({
+        mode: "Recovery ADB",
+        name: next.serial || "",
+        serial: next.serial || "",
+      });
+      notify(`已连接 ${next.serial}`);
+    } catch (e) {
+      showError(e);
+    } finally {
+      finish();
+    }
+  };
+  const collect = async () => {
     if (!adb) return;
     begin("采集中");
     try {
@@ -767,24 +834,38 @@ function App() {
         () => pushAndCollect(adb, gate),
       );
       setBusy("提交授权");
-      const issued = await issueAuthorization(
+      const result = await issueAuthorization(
         request,
         (label, done, total, speed) =>
           setProgress({ label, done, total, speed }),
         gate,
       );
-      setBusy("刷入授权包");
+      setIssued(result);
+      notify(`已取得 ${result.name}，请在 TWRP 中选择 高级 - ADB Sideload`);
+      setStep(4);
+    } catch (e) {
+      showError(e);
+    } finally {
+      finish();
+    }
+  };
+  const flashAuthorization = async () => {
+    if (!adb || !issued) return;
+    begin("刷入授权包");
+    try {
       await run(`adb sideload ${issued.name}`, () =>
-        sendSideload(
-          adb,
-          issued.blob,
-          (done, total) => setProgress({ label: "刷入授权包", done, total }),
-          issued.blob.size,
-          gate,
+        asSideload(() =>
+          sendSideload(
+            adb,
+            issued.blob,
+            (done, total) => setProgress({ label: "刷入授权包", done, total }),
+            issued.blob.size,
+            gate,
+          ),
         ),
       );
-      setMessage("授权包已自动刷入");
-      setStep(4);
+      notify("授权包已刷入");
+      setStep(5);
     } catch (e) {
       showError(e);
     } finally {
@@ -798,7 +879,8 @@ function App() {
       if (romFile) {
         const started = performance.now();
         await run(`adb sideload ${romFile.name}`, () =>
-          sendSideload(
+          asSideload(() =>
+            sendSideload(
             adb,
             romFile,
             (done, total) => {
@@ -810,13 +892,14 @@ function App() {
                 speed: done / Math.max(0.001, elapsed / 1000),
               });
             },
-            romFile.size,
-            gate,
+              romFile.size,
+              gate,
+            ),
           ),
         );
         await run("adb reboot", () => adb.power.reboot());
-        setStep(5);
-        setMessage("刷机包已刷入，设备正在重启");
+        setStep(6);
+        notify("刷机包已刷入，设备正在重启");
         return;
       }
       const assets = rom.assets
@@ -857,11 +940,11 @@ function App() {
         throw Error("刷机包偏移超出分卷范围");
       };
       await run("adb sideload release parts", () =>
-        sendSideload(adb, source, () => {}, total, gate),
+        asSideload(() => sendSideload(adb, source, () => {}, total, gate)),
       );
       await run("adb reboot", () => adb.power.reboot());
-      setStep(5);
-      setMessage("刷机包已刷入，设备正在重启");
+      setStep(6);
+      notify("刷机包已刷入，设备正在重启");
     } catch (e) {
       showError(e);
     } finally {
@@ -871,6 +954,8 @@ function App() {
   const restart = () => {
     gate.reset();
     setPaused(false);
+    setDevice(null);
+    setIssued(null);
     setBaseFile(null);
     setTwrpFile(null);
     setRomFile(null);
@@ -878,24 +963,41 @@ function App() {
     setAdb(null);
     setRom(null);
     setProgress(null);
-    setMessage("");
+    notify("");
     setStep(0);
   };
+  const reconnectButton = (
+    <button type="button" className="secondary" onClick={reconnectAdb} disabled={!!busy}>
+      <span className="material-icons">usb</span>
+      重新连接 ADB
+    </button>
+  );
   const pauseButton = busy ? (
     <button type="button" className="secondary" onClick={togglePause}>
       <span className="material-icons">{paused ? "play_arrow" : "pause"}</span>
       {paused ? "继续" : "暂停"}
     </button>
   ) : null;
-  const titles = ["连接", "底包", "TWRP", "授权", "刷机包", "完成"];
+  const titles = ["连接", "底包", "TWRP", "授权", "刷入授权", "刷机包", "完成"];
   const fallback = { label: busy || "等待操作", done: 0, total: 1 };
   return (
     <>
       {toast && (
-        <Toast key={toast.id} message={toast.text} onDismiss={dismissToast} />
+        <Toast
+          key={toast.id}
+          message={toast.text}
+          tone={toast.tone}
+          onDismiss={dismissToast}
+        />
       )}
       <header>
         <strong>Xiaomi MIX 4 刷机</strong>
+        <span className="device" key={device ? `${device.mode} ${device.name}` : "none"}>
+          <span className="material-icons">
+            {device ? "smartphone" : "usb"}
+          </span>
+          {device ? `${device.mode} ${device.name}`.trim() : "未连接设备"}
+        </span>
       </header>
       <main>
         <nav>
@@ -921,7 +1023,6 @@ function App() {
                 />
                 Mock 模式
               </label>
-              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
@@ -954,7 +1055,6 @@ function App() {
                 {busy || (baseFile ? "刷入本地底包" : "下载并刷入官方底包")}
               </Actions>
               <Progress {...(progress || fallback)} />
-              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
@@ -972,25 +1072,54 @@ function App() {
                 {busy || "自动启动 TWRP"}
               </Actions>
               <Progress {...(progress || fallback)} />
-              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
         {step === 3 && (
-          <Page title="自动授权" icon="vpn_key">
+          <Page title="采集并提交授权" icon="vpn_key">
             <p>
-              采集与提交在 TWRP 的普通 ADB 下完成。页面开始刷入授权包前，请在 TWRP 中选择 高级 - ADB Sideload。
+              这一步在 TWRP 的普通 ADB 下运行，请保持 TWRP 停留在主界面。页面会采集机型信息、提交授权并取回授权包。
             </p>
             <Panel>
-              <Actions extra={pauseButton} onClick={authorize} disabled={!adb || !!busy}>
-                {busy || "开始自动授权"}
+              <Actions
+                extra={
+                  <>
+                    {pauseButton}
+                    {reconnectButton}
+                  </>
+                }
+                onClick={collect}
+                disabled={!adb || !!busy}
+              >
+                {busy || "采集并提交授权"}
               </Actions>
               <Progress {...(progress || fallback)} />
-              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
         {step === 4 && (
+          <Page title="刷入授权包" icon="verified_user">
+            <p>
+              先在 TWRP 中选择 高级 - ADB Sideload 并滑动确认，再开始刷入。
+            </p>
+            <Panel>
+              <Actions
+                extra={
+                  <>
+                    {pauseButton}
+                    {reconnectButton}
+                  </>
+                }
+                onClick={flashAuthorization}
+                disabled={!adb || !issued || !!busy}
+              >
+                {busy || "刷入授权包"}
+              </Actions>
+              <Progress {...(progress || fallback)} />
+            </Panel>
+          </Page>
+        )}
+        {step === 5 && (
           <Page title="自动刷入刷机包" icon="inventory_2">
             <p>
               选择刷机版本或本地刷机包。开始前请在 TWRP 中选择 高级 - ADB
@@ -1017,18 +1146,22 @@ function App() {
                 label="选择本地刷机包，留空则下载所选版本"
               />
               <Actions
-                extra={pauseButton}
+                extra={
+                  <>
+                    {pauseButton}
+                    {reconnectButton}
+                  </>
+                }
                 onClick={flash}
                 disabled={(!rom && !romFile) || !adb || !!busy}
               >
                 {busy || (romFile ? "刷入本地刷机包" : "下载并自动刷入")}
               </Actions>
               <Progress {...(progress || fallback)} />
-              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
-        {step === 5 && (
+        {step === 6 && (
           <Page title="完成" icon="check_circle">
             <p>刷机包已刷入，设备正在重启进入系统。</p>
             <Panel>
@@ -1044,11 +1177,33 @@ function App() {
               : "等待执行命令"}
           </pre>
         </section>
+        <div className="step-nav">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setStep((current) => Math.max(0, current - 1))}
+            disabled={step === 0 || !!busy}
+          >
+            <span className="material-icons">arrow_back</span>
+            上一步
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              setStep((current) => Math.min(titles.length - 1, current + 1))
+            }
+            disabled={step === titles.length - 1 || !!busy}
+          >
+            下一步
+            <span className="material-icons">arrow_forward</span>
+          </button>
+        </div>
       </main>
     </>
   );
 }
-function Toast({ message, onDismiss }) {
+function Toast({ message, tone, onDismiss }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const frame = requestAnimationFrame(() => setOpen(true));
@@ -1061,8 +1216,13 @@ function Toast({ message, onDismiss }) {
     };
   }, [onDismiss]);
   return (
-    <div className={`toast${open ? " open" : ""}`} role="alert">
-      <span className="material-icons">error_outline</span>
+    <div
+      className={`toast ${tone}${open ? " open" : ""}`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      <span className="material-icons">
+        {tone === "error" ? "error_outline" : "info"}
+      </span>
       <span className="toast-text">{message}</span>
       <button type="button" className="toast-close" onClick={() => setOpen(false)}>
         <span className="material-icons">close</span>
