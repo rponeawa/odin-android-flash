@@ -11,24 +11,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Mega downloader
-        run: npm ci
-      - name: Download and split newest 秋城落叶 package
-        shell: bash
+      - uses: actions/setup-node@v4
+        with: {node-version: 20, cache: npm}
+      - run: npm ci
+      - name: Resolve newest Mega ROM
+        id: resolve
         run: |
-          set -euo pipefail
+          meta=$(MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/mega-link.mjs)
+          echo "name=$(echo "$meta" | jq -r .name)" >> "$GITHUB_OUTPUT"
+          echo "url=$(echo "$meta" | jq -r .url)" >> "$GITHUB_OUTPUT"
+      - name: Download ROM with resumable megatools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq megatools
           mkdir -p dist
-          MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/sync-mega.mjs
-      - name: Split metadata
-        id: meta
-        run: echo "sha=$(jq -r .sha256 dist/rom.json)" >> "$GITHUB_OUTPUT"
+          megadl --no-progress --path dist '${{ steps.resolve.outputs.url }}'
+          file=$(find dist -type f | head -n1)
+          test -s "$file"
+          sha=$(sha256sum "$file" | cut -d' ' -f1)
+          echo "$sha" > dist/sha256.txt
+          split -b 1900m -d -a 3 "$file" dist/odin-rom.zip.part-
+          rm -f "$file"
       - name: Publish release when content changed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
+        env: {GH_TOKEN: ${{ github.token }}}
         run: |
           set -euo pipefail
-          sha="${{ steps.meta.outputs.sha }}"
-          tag="rom-$sha"
-          if gh release view "$tag" >/dev/null 2>&1; then exit 0; fi
+          sha=$(cat dist/sha256.txt); tag="rom-$sha"
+          gh release view "$tag" >/dev/null 2>&1 && exit 0
           gh release create "$tag" dist/odin-rom.zip.part-* --title "刷机包 $sha" --notes "来源：Mega 公共文件夹。SHA-256: $sha"
