@@ -22,6 +22,7 @@ const TWRP =
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
 const RANGE = 8 * 1024 * 1024;
+const STALL = 30000;
 const BLOCK = 262144;
 const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
@@ -210,8 +211,13 @@ function rangedStream(url, total, onProgress, gate) {
       let chunk = null;
       for (let retry = 0; retry < 3 && !chunk; retry += 1) {
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 60000);
+        let timer;
+        const arm = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => ctl.abort(), STALL);
+        };
         try {
+          arm();
           const response = await fetch(proxied(url), {
             headers: { Range: `bytes=${start}-${end}` },
             signal: ctl.signal,
@@ -220,9 +226,32 @@ function rangedStream(url, total, onProgress, gate) {
             throw new AppError("downloadFailed", { status: response.status });
           if (response.status === 200 && total > RANGE)
             throw new AppError("rangeIgnored");
-          chunk = new Uint8Array(await response.arrayBuffer());
+          if (!response.body) {
+            chunk = new Uint8Array(await response.arrayBuffer());
+            break;
+          }
+          const reader = response.body.getReader();
+          const parts = [];
+          let size = 0;
+          while (true) {
+            arm();
+            const part = await reader.read();
+            if (part.done) break;
+            parts.push(part.value);
+            size += part.value.length;
+          }
+          const joined = new Uint8Array(size);
+          let at = 0;
+          for (const part of parts) {
+            joined.set(part, at);
+            at += part.length;
+          }
+          chunk = joined;
         } catch (e) {
-          if (retry === 2) throw e;
+          const failure = ctl.signal.aborted
+            ? new AppError("stalled", { seconds: STALL / 1000 })
+            : e;
+          if (retry === 2) throw failure;
         } finally {
           clearTimeout(timer);
         }
