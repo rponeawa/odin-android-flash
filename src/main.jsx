@@ -610,6 +610,14 @@ function App() {
       setProgress(null);
     }
   };
+  const restart = () => {
+    setFastboot(null);
+    setAdb(null);
+    setRom(null);
+    setProgress(null);
+    setMessage("");
+    setStep(0);
+  };
   const titles = ["连接", "底包", "TWRP", "授权", "刷机包", "完成"];
   const fallback = { label: busy || "等待操作", done: 0, total: 1 };
   return (
@@ -624,11 +632,11 @@ function App() {
           ))}
         </nav>
         {step === 0 && (
-          <Page title="连接设备">
+          <Page title="连接设备" icon="usb">
             <p>
               使用 Chrome 或 Edge 连接正常开机的 MIX 4，页面会自动处理后续刷机流程。
             </p>
-            <Panel icon="usb">
+            <Panel>
               <Actions onClick={connect} disabled={!!busy}>
                 {busy || "连接设备"}
               </Actions>
@@ -646,10 +654,10 @@ function App() {
           </Page>
         )}
         {step === 1 && (
-          <Page title="官方底包">
+          <Page title="官方底包" icon="download">
             <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
-            <Panel icon="download">
+            <Panel>
               <Actions onClick={flashBase} disabled={!fastboot || !!busy}>
                 {busy || "下载并刷入官方底包"}
               </Actions>
@@ -659,9 +667,9 @@ function App() {
           </Page>
         )}
         {step === 2 && (
-          <Page title="临时启动 TWRP">
+          <Page title="临时启动 TWRP" icon="memory">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
-            <Panel icon="memory">
+            <Panel>
               <Actions onClick={bootTwrp} disabled={!fastboot || !!busy}>
                 {busy || "自动启动 TWRP"}
               </Actions>
@@ -671,9 +679,9 @@ function App() {
           </Page>
         )}
         {step === 3 && (
-          <Page title="自动授权">
+          <Page title="自动授权" icon="vpn_key">
             <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
-            <Panel icon="vpn_key">
+            <Panel>
               <Actions onClick={authorize} disabled={!adb || !!busy}>
                 {busy || "开始自动授权"}
               </Actions>
@@ -683,12 +691,12 @@ function App() {
           </Page>
         )}
         {step === 4 && (
-          <Page title="自动刷入刷机包">
+          <Page title="自动刷入刷机包" icon="inventory_2">
             <p>
               选择刷机版本。页面会从 GitHub Release 分卷流式下载并自动执行 adb
               sideload。
             </p>
-            <Panel icon="inventory_2">
+            <Panel>
               <select
                 value={rom?.id || ""}
                 onChange={(e) =>
@@ -711,9 +719,10 @@ function App() {
           </Page>
         )}
         {step === 5 && (
-          <Page title="完成">
-            <Panel icon="check_circle">
-              刷机包已刷入，设备正在重启进入系统。
+          <Page title="完成" icon="check_circle">
+            <p>刷机包已刷入，设备正在重启进入系统。</p>
+            <Panel>
+              <Actions onClick={restart}>返回主页</Actions>
             </Panel>
           </Page>
         )}
@@ -727,23 +736,19 @@ function App() {
     </>
   );
 }
-function Page(p) {
+function Page({ title, icon, children }) {
   return (
     <section>
-      <h1>{p.title}</h1>
-      {p.children}
+      <h1>
+        <span className="material-icons">{icon}</span>
+        {title}
+      </h1>
+      {children}
     </section>
   );
 }
-function Panel({ icon, children }) {
-  return (
-    <div className="panel">
-      <div className="state">
-        <span className="material-icons">{icon}</span>
-        {children}
-      </div>
-    </div>
-  );
+function Panel({ children }) {
+  return <div className="panel">{children}</div>;
 }
 function Actions({ onClick, disabled, children }) {
   return (

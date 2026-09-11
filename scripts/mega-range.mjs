@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { File } from 'megajs';
 const url=process.env.MEGA_FOLDER_URL, out=process.env.OUTPUT, nameOut=process.env.NAME_OUTPUT, sizeOut=process.env.SIZE_OUTPUT; let start=Number(process.env.RANGE_START), end=Number(process.env.RANGE_END); const side=process.env.RANGE_SIDE;
-if(!url||!Number.isFinite(start)||!Number.isFinite(end)||!out) throw Error('MEGA_FOLDER_URL, RANGE_START, RANGE_END, OUTPUT required');
+if(!url||!out) throw Error('MEGA_FOLDER_URL and OUTPUT required');
 const folder=File.fromURL(url); await folder.loadAttributes();
 const xs=(folder.children||[]).filter(x=>/秋城落叶/.test(decodeURIComponent(x.name||''))).filter(x=>!/(底包|base|firmware|official)/i.test(x.name||'')).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
 if(!xs.length) throw Error('No ROM'); const file=xs[0];
