@@ -2,4 +2,4 @@ name = "odin-auth-proxy"
 main = "auth-proxy.js"
 compatibility_date = "2026-09-11"
 workers_dev = false
-routes = [{ pattern = "odin.androidflash.xyz/api/issue", zone_name = "androidflash.xyz" }]
+routes = [{ pattern = "odin.androidflash.xyz/api/*", zone_name = "androidflash.xyz" }]

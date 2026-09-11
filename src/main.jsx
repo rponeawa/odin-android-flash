@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Adb,
@@ -16,9 +16,20 @@ const BASE =
 const REPO =
   "https://api.github.com/repos/rponeawa/odin-android-flash/releases";
 const AUTH = "/api/issue";
+const PROXY = "/api/fetch?url=";
 const TWRP =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_twrp.img";
-const CHUNK = 64 * 1024;
+const COLLECT =
+  "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
+const RANGE = 8 * 1024 * 1024;
+const BLOCK = 262144;
+const PART = 32 * 1024 * 1024;
+const SKIP = /^(userdata|cache|metadata)$/i;
+
+const proxied = (url) => PROXY + encodeURIComponent(url);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const text = (bytes) =>
+  new TextDecoder().decode(bytes).replace(/\0.*$/, "").trim();
 
 async function connectAdb() {
   if (!navigator.usb)
@@ -34,12 +45,11 @@ async function connectAdb() {
   });
   return new Adb(transport);
 }
+
 async function pushAndCollect(adb) {
   const sync = await adb.sync();
-  const bin = await fetch(
-    "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect",
-  ).then((r) => {
-    if (!r.ok) throw Error("采集程序下载失败");
+  const bin = await fetch(proxied(COLLECT)).then((r) => {
+    if (!r.ok) throw Error(`采集程序下载失败 HTTP ${r.status}`);
     return r.blob();
   });
   await sync.write({
@@ -56,8 +66,9 @@ async function pushAndCollect(adb) {
   if (!out.size) throw Error("采集程序没有生成授权请求");
   return out;
 }
+
 async function downloadBlob(url, onProgress) {
-  const response = await fetch(url);
+  const response = await fetch(proxied(url));
   if (!response.ok) throw Error(`下载失败 HTTP ${response.status}`);
   const total = Number(response.headers.get("content-length")) || 0;
   if (!response.body) return response.blob();
@@ -75,38 +86,168 @@ async function downloadBlob(url, onProgress) {
   }
   return new Blob(chunks);
 }
-async function extractTarGz(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const data = new Uint8Array(await new Response(
-    new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
-  ).arrayBuffer());
-  const files = new Map();
-  for (let offset = 0; offset + 512 <= data.length; ) {
-    const name = new TextDecoder().decode(data.slice(offset, offset + 100)).replace(/\0.*$/, "");
+
+async function probeSize(url) {
+  const response = await fetch(proxied(url), { headers: { Range: "bytes=0-0" } });
+  if (!response.ok && response.status !== 206)
+    throw Error(`无法读取文件大小 HTTP ${response.status}`);
+  await response.body?.cancel();
+  const range = response.headers.get("content-range");
+  if (range) return Number(range.split("/").pop()) || 0;
+  return Number(response.headers.get("content-length")) || 0;
+}
+
+function rangedStream(url, total, onProgress) {
+  let start = 0;
+  const started = performance.now();
+  return new ReadableStream({
+    async pull(controller) {
+      if (start >= total) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(total - 1, start + RANGE - 1);
+      let chunk = null;
+      for (let retry = 0; retry < 3 && !chunk; retry += 1) {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 60000);
+        try {
+          const response = await fetch(proxied(url), {
+            headers: { Range: `bytes=${start}-${end}` },
+            signal: ctl.signal,
+          });
+          if (!response.ok && response.status !== 206)
+            throw Error(`下载失败 HTTP ${response.status}`);
+          if (response.status === 200 && total > RANGE)
+            throw Error("源站忽略了 Range 请求，无法分段下载");
+          chunk = new Uint8Array(await response.arrayBuffer());
+        } catch (e) {
+          if (retry === 2) throw e;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      controller.enqueue(chunk);
+      start = end + 1;
+      const seconds = Math.max(0.001, (performance.now() - started) / 1000);
+      onProgress?.(start, total, start / seconds);
+    },
+  });
+}
+
+function byteReader(stream) {
+  const reader = stream.getReader();
+  const queue = [];
+  let size = 0;
+  let ended = false;
+  return {
+    get size() {
+      return size;
+    },
+    async fill(need) {
+      while (size < need && !ended) {
+        const part = await reader.read();
+        if (part.done) {
+          ended = true;
+          break;
+        }
+        if (part.value.length) {
+          queue.push(part.value);
+          size += part.value.length;
+        }
+      }
+      return size >= need;
+    },
+    take(count) {
+      const out = new Uint8Array(count);
+      let filled = 0;
+      while (filled < count) {
+        const head = queue[0];
+        const use = Math.min(head.length, count - filled);
+        out.set(head.subarray(0, use), filled);
+        if (use === head.length) queue.shift();
+        else queue[0] = head.subarray(use);
+        filled += use;
+        size -= use;
+      }
+      return out;
+    },
+    cancel: () => reader.cancel(),
+  };
+}
+
+function blobSink() {
+  const parts = [];
+  let buffered = [];
+  let held = 0;
+  return {
+    write(chunk) {
+      buffered.push(chunk);
+      held += chunk.length;
+      if (held >= PART) {
+        parts.push(new Blob(buffered));
+        buffered = [];
+        held = 0;
+      }
+    },
+    end() {
+      if (held) parts.push(new Blob(buffered));
+      return new Blob(parts);
+    },
+  };
+}
+
+async function extractTarStream(stream, onEntry) {
+  const src = byteReader(stream);
+  while (await src.fill(512)) {
+    const header = src.take(512);
+    const name = text(header.subarray(0, 100));
     if (!name) break;
-    const sizeText = new TextDecoder().decode(data.slice(offset + 124, offset + 136)).replace(/\0.*$/, "").trim();
-    const size = parseInt(sizeText, 8) || 0;
-    const start = offset + 512;
-    files.set(name, new Blob([data.slice(start, start + size)]));
-    offset = start + Math.ceil(size / 512) * 512;
+    const size = parseInt(text(header.subarray(124, 136)), 8) || 0;
+    const padding = Math.ceil(size / 512) * 512 - size;
+    const sink = await onEntry(name, size);
+    let left = size;
+    while (left > 0) {
+      if (!(await src.fill(1))) throw Error(`底包数据在 ${name} 处中断`);
+      const chunk = src.take(Math.min(left, src.size));
+      sink?.write(chunk);
+      left -= chunk.length;
+    }
+    if (padding) {
+      await src.fill(padding);
+      src.take(Math.min(padding, src.size));
+    }
+    await sink?.end();
   }
-  return files;
+  await src.cancel();
 }
-async function flashBasePackage(fastboot, blob, onProgress) {
-  const files = await extractTarGz(blob);
-  const images = [...files.entries()].filter(([name]) => /\.img$/i.test(name));
-  const partitions = images.map(([name]) => name.split("/").pop().replace(/\.img$/i, ""));
-  if (!images.length) throw Error("官方底包中没有找到镜像文件");
-  let index = 0;
-  for (const [name, image] of images) {
-    const partition = partitions[index++];
-    if (/^(userdata|cache|metadata)$/i.test(partition)) continue;
-    await fastboot.flashBlob(partition, image, (p) =>
-      onProgress?.(index - 1 + p, images.length),
-    );
-  }
-  await fastboot.runCommand("erase:userdata");
+
+async function flashBasePackage(fastboot, url, onDownload, onFlash, onCommand) {
+  const total = await probeSize(url);
+  if (!total) throw Error("无法读取官方底包大小");
+  const stream = rangedStream(url, total, onDownload).pipeThrough(
+    new DecompressionStream("gzip"),
+  );
+  let flashed = 0;
+  await extractTarStream(stream, (name) => {
+    if (!/\.img$/i.test(name)) return null;
+    const partition = name.split("/").pop().replace(/\.img$/i, "");
+    if (SKIP.test(partition)) return null;
+    const sink = blobSink();
+    return {
+      write: sink.write,
+      end: async () => {
+        const image = sink.end();
+        onCommand?.(`fastboot flash ${partition} <${name}>`);
+        await fastboot.flashBlob(partition, image, (p) => onFlash(partition, p));
+        flashed += 1;
+      },
+    };
+  });
+  if (!flashed) throw Error("官方底包中没有找到镜像文件");
+  return flashed;
 }
+
 async function issueAuthorization(request, onProgress) {
   const fd = new FormData();
   fd.append("file", request, "request.zip");
@@ -115,7 +256,8 @@ async function issueAuthorization(request, onProgress) {
     xhr.open("POST", AUTH);
     xhr.responseType = "json";
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress?.("上传授权请求", event.loaded, event.total);
+      if (event.lengthComputable)
+        onProgress?.("上传授权请求", event.loaded, event.total);
     };
     xhr.onerror = () => reject(Error("授权请求网络错误"));
     xhr.ontimeout = () => reject(Error("授权请求超时"));
@@ -134,14 +276,14 @@ async function issueAuthorization(request, onProgress) {
     };
     xhr.send(fd);
   });
-  const blob = await downloadBlob(result.download, (done, total) => {
-    onProgress?.("下载授权包", done, total);
+  const blob = await downloadBlob(result.download, (done, total, speed) => {
+    onProgress?.("下载授权包", done, total, speed);
   });
   return { blob, name: result.filename || "authorization.zip" };
 }
 
 async function sendSideload(adb, source, onProgress, total) {
-  const socket = await adb.createSocket(`sideload-host:${total}:262144`);
+  const socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
   let sent = 0;
@@ -173,8 +315,8 @@ async function sendSideload(adb, source, onProgress, total) {
     if (cmd === "FAILFAIL") throw Error("TWRP 拒绝刷机包");
     const block = Number(cmd);
     if (!Number.isInteger(block)) throw Error(`sideload 返回无效块号 ${cmd}`);
-    const offset = block * 262144;
-    const len = Math.min(262144, total - offset);
+    const offset = block * BLOCK;
+    const len = Math.min(BLOCK, total - offset);
     if (len <= 0) throw Error("sideload 请求超出文件范围");
     const data = await get(offset, len);
     await writer.write(data);
@@ -186,37 +328,88 @@ async function sendSideload(adb, source, onProgress, total) {
   await socket.close();
 }
 
-async function rangedDownload(url, onProgress) {
-  const head = await fetch(url, { method: "HEAD" });
-  const total = Number(head.headers.get("content-length")) || 0;
-  if (!total) return fetch(url).then((r) => r.blob());
-  const parts = [];
-  let done = 0;
-  for (let start = 0; start < total; start += 8 * 1024 * 1024) {
-    const end = Math.min(total - 1, start + 8 * 1024 * 1024 - 1);
-    let ok = false;
-    for (let retry = 0; retry < 3 && !ok; retry++) {
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 50000);
-      try {
-        const r = await fetch(url, {
-          headers: { Range: `bytes=${start}-${end}` },
-          signal: ctl.signal,
-        });
-        if (!r.ok && r.status !== 206) throw Error(`HTTP ${r.status}`);
-        parts.push(await r.arrayBuffer());
-        done = end + 1;
-        onProgress(done, total);
-        ok = true;
-      } catch (e) {
-        if (retry === 2) throw e;
-      } finally {
-        clearTimeout(timer);
-      }
-    }
+async function feedProgress(size, onProgress) {
+  const steps = Math.max(4, Math.min(40, Math.round(size / (16 * 1024 * 1024))));
+  for (let i = 1; i <= steps; i += 1) {
+    await wait(60);
+    onProgress?.(i / steps);
   }
-  return new Blob(parts);
 }
+
+function mockFastboot() {
+  return {
+    mock: true,
+    async connect() {
+      await wait(350);
+    },
+    async getVariable(name) {
+      await wait(120);
+      return name === "product" ? "odin" : "";
+    },
+    async runCommand() {
+      await wait(350);
+      return { text: "" };
+    },
+    async flashBlob(partition, blob, onProgress) {
+      await feedProgress(blob.size, onProgress);
+    },
+    async bootBlob(blob, onProgress) {
+      await feedProgress(blob.size, onProgress);
+    },
+  };
+}
+
+function mockSideloadSocket(total) {
+  const count = Math.ceil(total / BLOCK);
+  const encoder = new TextEncoder();
+  let next = 0;
+  return {
+    readable: new ReadableStream({
+      async pull(controller) {
+        await wait(8);
+        controller.enqueue(
+          encoder.encode(
+            next < count ? String(next++).padStart(8, "0") : "DONEDONE",
+          ),
+        );
+      },
+    }),
+    writable: new WritableStream({ write() {} }),
+    async close() {},
+  };
+}
+
+function mockAdb() {
+  return {
+    mock: true,
+    serial: "mock-device",
+    async sync() {
+      return {
+        async write({ file }) {
+          if (file) await new Response(file).arrayBuffer();
+        },
+        async dispose() {},
+      };
+    },
+    subprocess: {
+      noneProtocol: {
+        async spawn() {
+          await wait(400);
+          return { output: new Blob([new Uint8Array(64)]).stream() };
+        },
+      },
+    },
+    power: {
+      async reboot() {
+        await wait(300);
+      },
+    },
+    async createSocket(service) {
+      return mockSideloadSocket(Number(service.split(":")[1]) || 0);
+    },
+  };
+}
+
 function App() {
   const [step, setStep] = useState(0),
     [releases, setReleases] = useState([]),
@@ -229,22 +422,16 @@ function App() {
     [message, setMessage] = useState(""),
     [mockMode, setMockMode] = useState(false);
   const logRef = useRef(null);
-  const logCommand = (text) =>
+  const logCommand = (command) =>
     setCommandLog((items) => [
       ...items.slice(-39),
-      `${new Date().toLocaleTimeString()}  ${text}`,
+      `${new Date().toLocaleTimeString()}  ${mockMode ? "[mock] " : ""}${command}`,
     ]);
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [commandLog]);
-  const executeCommand = async ({ name, mock = mockMode, action, delay = 350, device = /^(usb|fastboot|adb)/i.test(name) }) => {
-    if (device) logCommand(`${mock ? "[mock] " : ""}${name}`);
-    if (mock) {
-      if (typeof action === "function") return action();
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      return undefined;
-    }
-    if (typeof action !== "function") throw Error(`未实现命令：${name}`);
+  const run = async (command, action) => {
+    logCommand(command);
     return action();
   };
   useEffect(() => {
@@ -262,19 +449,12 @@ function App() {
       .catch((e) => setMessage(e.message));
   }, []);
   const connect = async () => {
-    if (mockMode) {
-      await executeCommand({ name: "usb.requestDevice(filters=fastboot)" });
-      await executeCommand({ name: "fastboot getvar product" });
-      setMessage("测试设备已连接");
-      setStep(1);
-      return;
-    }
     setBusy("连接 fastboot");
     try {
-      const f = new FastbootDevice();
-      await f.connect();
-      logCommand("fastboot usb connect");
-      setFastboot(f);
+      const device = mockMode ? mockFastboot() : new FastbootDevice();
+      await run("fastboot usb connect", () => device.connect());
+      await run("fastboot getvar product", () => device.getVariable("product"));
+      setFastboot(device);
       setMessage("已连接 fastboot");
       setStep(1);
     } catch (e) {
@@ -283,82 +463,59 @@ function App() {
       setBusy("");
     }
   };
-  const bootTwrp = async () => {
-    if (mockMode) {
-      setBusy("下载 TWRP");
-      await executeCommand({ name: "GET qlp_twrp.img", action: () => downloadBlob(TWRP, (done, total, speed) => setProgress({ label: "下载 TWRP", done, total, speed })) });
-      await executeCommand({ name: "fastboot download <qlp_twrp.img>", action: async () => {
-        for (let done = 0; done <= 10; done += 1) {
-          setProgress({ label: "上传 TWRP", done, total: 10 });
-          await new Promise((resolve) => setTimeout(resolve, 120));
-        }
-      } });
-      await executeCommand({ name: "fastboot boot" });
-      setMessage("测试 TWRP 已启动");
-      setStep(3);
-      setBusy("");
-      return;
-    }
+  const flashBase = async () => {
     if (!fastboot) return;
-    setBusy("启动 TWRP");
+    setBusy("下载并刷入官方底包");
     try {
-      const blob = await executeCommand({
-        name: "GET qlp_twrp.img",
-        action: () => downloadBlob(TWRP, (done, total) =>
-        setProgress({ label: "下载 TWRP", done, total, speed }),
-        ),
-      });
-      await executeCommand({
-        name: "fastboot boot <qlp_twrp.img>",
-        action: () => fastboot.bootBlob(blob, (p) =>
-        setProgress({
-          label: "上传 TWRP",
-          done: p.bytesSent || 0,
-          total: p.totalBytes || blob.size,
-        }),
-        ),
-      });
-      setMessage("TWRP 已启动，请等待 ADB");
-      setStep(3);
-      setBusy("等待 ADB");
-      const a = await connectAdb();
-      setAdb(a);
-      setMessage(`已连接 ${a.serial}`);
+      const flashed = await flashBasePackage(
+        fastboot,
+        BASE,
+        (done, total, speed) =>
+          setProgress({ label: "下载官方底包", done, total, speed }),
+        (partition, p) =>
+          setProgress({
+            label: `刷入 ${partition}`,
+            done: Math.round(p * 1000),
+            total: 1000,
+          }),
+        logCommand,
+      );
+      await run("fastboot erase userdata", () =>
+        fastboot.runCommand("erase:userdata"),
+      );
+      setMessage(`已刷入 ${flashed} 个分区，设备保持在 fastboot`);
+      setStep(2);
     } catch (e) {
       setMessage(e.message);
     } finally {
       setBusy("");
+      setProgress(null);
     }
   };
-  const flashBase = async () => {
-    if (mockMode) {
-      setBusy("下载并刷入官方底包");
-      await executeCommand({ name: "GET official-base.tgz", action: () => downloadBlob(BASE, (done, total, speed) => setProgress({ label: "下载官方底包", done, total, speed })) });
-      setProgress(null);
-      for (const partition of ["boot", "vendor_boot", "dtbo", "vbmeta", "super"]) {
-        await executeCommand({ name: `fastboot flash ${partition} <image>`, delay: 400 });
-      }
-      await executeCommand({ name: "fastboot erase userdata" });
-      setMessage("测试底包已刷入，设备保持在 fastboot");
-      setStep(2);
-      setBusy("");
-      return;
-    }
+  const bootTwrp = async () => {
     if (!fastboot) return;
-    setBusy("下载并刷入官方底包");
+    setBusy("启动 TWRP");
     try {
-      const blob = await downloadBlob(BASE, (done, total) =>
-        setProgress({ label: "下载官方底包", done, total, speed }),
+      const blob = await downloadBlob(TWRP, (done, total, speed) =>
+        setProgress({ label: "下载 TWRP", done, total, speed }),
       );
-      await flashBasePackage(fastboot, blob, (done, total) =>
-        setProgress({ label: "刷入官方底包", done, total }),
+      await run("fastboot boot <qlp_twrp.img>", () =>
+        fastboot.bootBlob(blob, (p) =>
+          setProgress({
+            label: "上传 TWRP",
+            done: Math.round(p * 1000),
+            total: 1000,
+          }),
+        ),
       );
-      await executeCommand({
-        name: "fastboot erase userdata",
-        action: () => fastboot.runCommand("erase:userdata"),
-      });
-      setMessage("官方底包已刷入，设备保持在 fastboot");
-      setStep(2);
+      setMessage("TWRP 已启动，请等待 ADB");
+      setStep(3);
+      setBusy("等待 ADB");
+      const device = await run("adb connect (TWRP)", () =>
+        mockMode ? mockAdb() : connectAdb(),
+      );
+      setAdb(device);
+      setMessage(`已连接 ${device.serial}`);
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -367,33 +524,28 @@ function App() {
     }
   };
   const authorize = async () => {
-    if (mockMode) {
-      await executeCommand({ name: "adb connect (TWRP)" });
-      await executeCommand({ name: "adb push qlp_collect /tmp/qlp_collect" });
-      await executeCommand({ name: "adb shell /tmp/qlp_collect qlp_flash" });
-      await executeCommand({ name: "POST /api/issue request.zip", delay: 500 });
-      await executeCommand({ name: "GET authorization.zip (mock source)", action: () => downloadBlob(TWRP, (done, total, speed) => setProgress({ label: "下载授权包", done, total, speed })) });
-      await executeCommand({ name: "adb sideload authorization.zip", delay: 700 });
-      setMessage("测试授权包已刷入");
-      setStep(4);
-      setProgress(null);
-      return;
-    }
     if (!adb) return;
     setBusy("采集中");
     try {
-      logCommand("adb push qlp_collect /tmp/qlp_collect");
-      const req = await pushAndCollect(adb);
+      const request = await run(
+        "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
+        () => pushAndCollect(adb),
+      );
       setBusy("提交授权");
-      const issued = await issueAuthorization(req, (label, done, total) =>
-        setProgress({ label, done, total }),
+      const issued = await issueAuthorization(
+        request,
+        (label, done, total, speed) =>
+          setProgress({ label, done, total, speed }),
       );
       setBusy("刷入授权包");
-      await sendSideload(
-        adb,
-        issued.blob.stream(),
-        (d, t) => setProgress({ label: "刷入授权包", done: d, total: t }),
-        issued.blob.size,
+      await run(`adb sideload ${issued.name}`, () =>
+        sendSideload(
+          adb,
+          issued.blob,
+          (done, total) =>
+            setProgress({ label: "刷入授权包", done, total }),
+          issued.blob.size,
+        ),
       );
       setMessage("授权包已自动刷入");
       setStep(4);
@@ -405,16 +557,6 @@ function App() {
     }
   };
   const flash = async () => {
-    if (mockMode) {
-      const mockRomUrl = rom?.assets?.find((asset) => /\.part-[ab]-\d+$/.test(asset.name))?.browser_download_url || TWRP;
-      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, action: () => downloadBlob(mockRomUrl, (done, total, speed) => setProgress({ label: "下载刷机包", done, total, speed })) });
-      await executeCommand({ name: "adb sideload release parts", delay: 1000 });
-      await executeCommand({ name: "adb reboot" });
-      setMessage("测试刷机包已刷入，设备正在重启");
-      setStep(5);
-      setProgress(null);
-      return;
-    }
     if (!adb || !rom) return;
     setBusy("下载并刷入");
     try {
@@ -425,23 +567,29 @@ function App() {
         );
       const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
       let downloaded = 0;
+      const started = performance.now();
       const source = async (offset, len) => {
         let base = 0;
         for (const a of assets) {
           const size = Number(a.size || 0);
           if (offset < base + size) {
             const local = offset - base;
-            const r = await fetch(a.browser_download_url, {
+            const r = await fetch(proxied(a.browser_download_url), {
               headers: { Range: `bytes=${local}-${local + len - 1}` },
             });
             if (!r.ok && r.status !== 206)
               throw Error(`下载分卷失败 HTTP ${r.status}`);
             const data = new Uint8Array(await r.arrayBuffer());
             downloaded = Math.max(downloaded, offset + data.length);
+            const seconds = Math.max(
+              0.001,
+              (performance.now() - started) / 1000,
+            );
             setProgress({
-              label: `下载并刷入 ${Math.round((downloaded / total) * 100)}%`,
+              label: "下载并刷入刷机包",
               done: downloaded,
               total,
+              speed: downloaded / seconds,
             });
             return data;
           }
@@ -449,14 +597,10 @@ function App() {
         }
         throw Error("刷机包偏移超出分卷范围");
       };
-      await sendSideload(
-        adb,
-        source,
-        (d, t) => setProgress({ label: "刷入刷机包", done: d, total: t }),
-        total,
+      await run("adb sideload release parts", () =>
+        sendSideload(adb, source, () => {}, total),
       );
-      logCommand("adb reboot");
-      await adb.power.reboot();
+      await run("adb reboot", () => adb.power.reboot());
       setStep(5);
       setMessage("刷机包已刷入，设备正在重启");
     } catch (e) {
@@ -467,12 +611,11 @@ function App() {
     }
   };
   const titles = ["连接", "底包", "TWRP", "授权", "刷机包", "完成"];
+  const fallback = { label: busy || "等待操作", done: 0, total: 1 };
   return (
     <>
       <header>
-        <strong>
-          Xiaomi MIX 4 刷机
-        </strong>
+        <strong>Xiaomi MIX 4 刷机</strong>
       </header>
       <main>
         <nav>
@@ -490,8 +633,13 @@ function App() {
                 {busy || "连接设备"}
               </Actions>
               <label className="mode-choice">
-                <input type="radio" name="mode" checked={mockMode} onChange={(event) => setMockMode(event.target.checked)} disabled={!!busy} />
-                Mock 模式
+                <input
+                  type="checkbox"
+                  checked={mockMode}
+                  onChange={(event) => setMockMode(event.target.checked)}
+                  disabled={!!busy}
+                />
+                Mock 模式，跳过 adb 与 fastboot 的设备通信
               </label>
               {message && <div className="result">{message}</div>}
             </Panel>
@@ -502,10 +650,10 @@ function App() {
             <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
             <Panel icon="download">
-              <Actions onClick={flashBase} disabled={!mockMode && (!fastboot || !!busy)}>
+              <Actions onClick={flashBase} disabled={!fastboot || !!busy}>
                 {busy || "下载并刷入官方底包"}
               </Actions>
-              <Progress {...(progress || { label: busy || "等待操作", done: 0, total: 1 })} />
+              <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -514,10 +662,10 @@ function App() {
           <Page title="临时启动 TWRP">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
             <Panel icon="memory">
-              <Actions onClick={bootTwrp} disabled={!mockMode && (!fastboot || !!busy)}>
+              <Actions onClick={bootTwrp} disabled={!fastboot || !!busy}>
                 {busy || "自动启动 TWRP"}
               </Actions>
-              <Progress {...(progress || { label: busy || "等待操作", done: 0, total: 1 })} />
+              <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -526,10 +674,10 @@ function App() {
           <Page title="自动授权">
             <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
             <Panel icon="vpn_key">
-              <Actions onClick={authorize} disabled={(!mockMode && !adb) || !!busy}>
+              <Actions onClick={authorize} disabled={!adb || !!busy}>
                 {busy || "开始自动授权"}
               </Actions>
-              {progress && <Progress {...progress} />}{" "}
+              <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -554,13 +702,10 @@ function App() {
                   </option>
                 ))}
               </select>
-              <Actions
-                onClick={flash}
-                disabled={(!mockMode && (!rom || !adb)) || !!busy}
-              >
+              <Actions onClick={flash} disabled={!rom || !adb || !!busy}>
                 {busy || "下载并自动刷入"}
               </Actions>
-              {progress && <Progress {...progress} />}{" "}
+              <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -574,7 +719,9 @@ function App() {
         )}
         <section className="command-log" aria-live="polite">
           <h2>日志</h2>
-          <pre ref={logRef}>{commandLog.length ? commandLog.join("\n") : "等待执行命令"}</pre>
+          <pre ref={logRef}>
+            {commandLog.length ? commandLog.join("\n") : "等待执行命令"}
+          </pre>
         </section>
       </main>
     </>
@@ -609,14 +756,26 @@ function Actions({ onClick, disabled, children }) {
 }
 function Progress({ label, done, total, speed }) {
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  const display = total ? `${percent}%` : `${(done / 1024 / 1024).toFixed(1)} MB`;
+  const display = total
+    ? `${percent}%`
+    : `${(done / 1024 / 1024).toFixed(1)} MB`;
   return (
     <div className="progress">
       <div>
-        {label} {display}{speed ? ` | ${formatSpeed(speed)}` : ""}
+        {label} {display}
+        {speed ? ` | ${formatSpeed(speed)}` : ""}
       </div>
-      <div className={`progress-track${total ? "" : " indeterminate"}`} role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100">
-        <div className="progress-fill" style={{ width: `${total ? percent : 35}%` }} />
+      <div
+        className={`progress-track${total ? "" : " indeterminate"}`}
+        role="progressbar"
+        aria-valuenow={percent}
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <div
+          className="progress-fill"
+          style={{ width: `${total ? percent : 35}%` }}
+        />
       </div>
     </div>
   );

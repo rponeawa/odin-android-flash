@@ -7,7 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "test": "tsx --test tests/*.test.ts",
-    "sync:mega": "node scripts/sync-mega.mjs"
+    "sync:mega": "node scripts/sync-mega.mjs",
+    "deploy:worker": "wrangler deploy --config worker/wrangler.toml"
   },
   "dependencies": {
     "@yume-chan/adb": "2.6.4",
@@ -26,6 +27,7 @@
     "megajs": "1.3.10",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "wrangler": "^4.131.1"
   }
 }
