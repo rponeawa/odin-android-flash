@@ -64,12 +64,14 @@ async function downloadBlob(url, onProgress) {
   const reader = response.body.getReader();
   const chunks = [];
   let done = 0;
+  const started = performance.now();
   while (true) {
     const part = await reader.read();
     if (part.done) break;
     chunks.push(part.value);
     done += part.value.length;
-    onProgress?.(done, total);
+    const seconds = Math.max(0.001, (performance.now() - started) / 1000);
+    onProgress?.(done, total, done / seconds);
   }
   return new Blob(chunks);
 }
@@ -235,8 +237,8 @@ function App() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [commandLog]);
-  const executeCommand = async ({ name, mock = mockMode, action, delay = 350 }) => {
-    logCommand(`${mock ? "[mock] " : ""}${name}`);
+  const executeCommand = async ({ name, mock = mockMode, action, delay = 350, device = /^(usb|fastboot|adb)/i.test(name) }) => {
+    if (device) logCommand(`${mock ? "[mock] " : ""}${name}`);
     if (mock) {
       if (typeof action === "function") return action();
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -284,7 +286,7 @@ function App() {
   const bootTwrp = async () => {
     if (mockMode) {
       setBusy("下载 TWRP");
-      await executeCommand({ name: "GET qlp_twrp.img", action: () => downloadBlob(TWRP, (done, total) => setProgress({ label: "下载 TWRP", done, total })) });
+      await executeCommand({ name: "GET qlp_twrp.img", action: () => downloadBlob(TWRP, (done, total, speed) => setProgress({ label: "下载 TWRP", done, total, speed })) });
       await executeCommand({ name: "fastboot download <qlp_twrp.img>", action: async () => {
         for (let done = 0; done <= 10; done += 1) {
           setProgress({ label: "上传 TWRP", done, total: 10 });
@@ -303,7 +305,7 @@ function App() {
       const blob = await executeCommand({
         name: "GET qlp_twrp.img",
         action: () => downloadBlob(TWRP, (done, total) =>
-        setProgress({ label: "下载 TWRP", done, total }),
+        setProgress({ label: "下载 TWRP", done, total, speed }),
         ),
       });
       await executeCommand({
@@ -331,7 +333,7 @@ function App() {
   const flashBase = async () => {
     if (mockMode) {
       setBusy("下载并刷入官方底包");
-      await executeCommand({ name: "GET official-base.tgz", action: () => downloadBlob(BASE, (done, total) => setProgress({ label: "下载官方底包", done, total })) });
+      await executeCommand({ name: "GET official-base.tgz", action: () => downloadBlob(BASE, (done, total, speed) => setProgress({ label: "下载官方底包", done, total, speed })) });
       setProgress(null);
       for (const partition of ["boot", "vendor_boot", "dtbo", "vbmeta", "super"]) {
         await executeCommand({ name: `fastboot flash ${partition} <image>`, delay: 400 });
@@ -346,7 +348,7 @@ function App() {
     setBusy("下载并刷入官方底包");
     try {
       const blob = await downloadBlob(BASE, (done, total) =>
-        setProgress({ label: "下载官方底包", done, total }),
+        setProgress({ label: "下载官方底包", done, total, speed }),
       );
       await flashBasePackage(fastboot, blob, (done, total) =>
         setProgress({ label: "刷入官方底包", done, total }),
@@ -370,7 +372,7 @@ function App() {
       await executeCommand({ name: "adb push qlp_collect /tmp/qlp_collect" });
       await executeCommand({ name: "adb shell /tmp/qlp_collect qlp_flash" });
       await executeCommand({ name: "POST /api/issue request.zip", delay: 500 });
-      await executeCommand({ name: "GET authorization.zip (mock source)", action: () => downloadBlob(TWRP, (done, total) => setProgress({ label: "下载授权包", done, total })) });
+      await executeCommand({ name: "GET authorization.zip (mock source)", action: () => downloadBlob(TWRP, (done, total, speed) => setProgress({ label: "下载授权包", done, total, speed })) });
       await executeCommand({ name: "adb sideload authorization.zip", delay: 700 });
       setMessage("测试授权包已刷入");
       setStep(4);
@@ -405,7 +407,7 @@ function App() {
   const flash = async () => {
     if (mockMode) {
       const mockRomUrl = rom?.assets?.find((asset) => /\.part-[ab]-\d+$/.test(asset.name))?.browser_download_url || TWRP;
-      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, action: () => downloadBlob(mockRomUrl, (done, total) => setProgress({ label: "下载刷机包", done, total })) });
+      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, action: () => downloadBlob(mockRomUrl, (done, total, speed) => setProgress({ label: "下载刷机包", done, total, speed })) });
       await executeCommand({ name: "adb sideload release parts", delay: 1000 });
       await executeCommand({ name: "adb reboot" });
       setMessage("测试刷机包已刷入，设备正在重启");
@@ -605,18 +607,22 @@ function Actions({ onClick, disabled, children }) {
     </div>
   );
 }
-function Progress({ label, done, total }) {
+function Progress({ label, done, total, speed }) {
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const display = total ? `${percent}%` : `${(done / 1024 / 1024).toFixed(1)} MB`;
   return (
     <div className="progress">
       <div>
-        {label} {display}
+        {label} {display}{speed ? ` | ${formatSpeed(speed)}` : ""}
       </div>
       <div className={`progress-track${total ? "" : " indeterminate"}`} role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100">
         <div className="progress-fill" style={{ width: `${total ? percent : 35}%` }} />
       </div>
     </div>
   );
+}
+function formatSpeed(value) {
+  if (value > 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${Math.max(1, Math.round(value / 1024))} KB/s`;
 }
 createRoot(document.getElementById("root")).render(<App />);
