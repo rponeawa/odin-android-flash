@@ -2,7 +2,6 @@ name: Sync Mega ROM releases
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/mega-release.yml, scripts/mega-link.mjs]
   workflow_dispatch:
   schedule:
     - cron: '17 */6 * * *'
@@ -15,7 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: 20, cache: npm}
+        with:
+          node-version: 20
+          cache: npm
       - run: npm ci
       - name: Resolve newest Mega ROM
         id: resolve
@@ -35,7 +36,8 @@ jobs:
           split -b 1900m -d -a 3 "$file" dist/odin-rom.zip.part-
           rm -f "$file"
       - name: Publish release when content changed
-        env: {GH_TOKEN: ${{ github.token }}}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sha=$(cat dist/sha256.txt); tag="rom-$sha"
