@@ -27,6 +27,44 @@ const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
+function createGate() {
+  let paused = false;
+  let waiters = [];
+  let since = 0;
+  let total = 0;
+  const release = () => {
+    const pending = waiters;
+    waiters = [];
+    for (const resolve of pending) resolve();
+  };
+  return {
+    get paused() {
+      return paused;
+    },
+    get pausedMs() {
+      return total + (paused ? performance.now() - since : 0);
+    },
+    pause() {
+      if (paused) return;
+      paused = true;
+      since = performance.now();
+    },
+    resume() {
+      if (!paused) return;
+      paused = false;
+      total += performance.now() - since;
+      release();
+    },
+    reset() {
+      paused = false;
+      total = 0;
+      release();
+    },
+    wait() {
+      return paused ? new Promise((resolve) => waiters.push(resolve)) : null;
+    },
+  };
+}
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const text = (bytes) =>
   new TextDecoder().decode(bytes).replace(/\0.*$/, "").trim();
@@ -46,12 +84,9 @@ async function connectAdb() {
   return new Adb(transport);
 }
 
-async function pushAndCollect(adb) {
+async function pushAndCollect(adb, gate) {
   const sync = await adb.sync();
-  const bin = await fetch(proxied(COLLECT)).then((r) => {
-    if (!r.ok) throw Error(`采集程序下载失败 HTTP ${r.status}`);
-    return r.blob();
-  });
+  const bin = await downloadBlob(COLLECT, undefined, gate);
   await sync.write({
     filename: "/tmp/qlp_collect",
     file: bin.stream(),
@@ -67,22 +102,33 @@ async function pushAndCollect(adb) {
   return out;
 }
 
-async function downloadBlob(url, onProgress) {
+async function downloadBlob(url, onProgress, gate) {
+  const probe = await probeSize(url).catch(() => ({ total: 0, ranged: false }));
+  if (probe.ranged && probe.total) {
+    const reader = rangedStream(url, probe.total, onProgress, gate).getReader();
+    const parts = [];
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      parts.push(part.value);
+    }
+    return new Blob(parts);
+  }
   const response = await fetch(proxied(url));
   if (!response.ok) throw Error(`下载失败 HTTP ${response.status}`);
-  const total = Number(response.headers.get("content-length")) || 0;
   if (!response.body) return response.blob();
   const reader = response.body.getReader();
   const chunks = [];
   let done = 0;
   const started = performance.now();
   while (true) {
+    await gate?.wait();
     const part = await reader.read();
     if (part.done) break;
     chunks.push(part.value);
     done += part.value.length;
-    const seconds = Math.max(0.001, (performance.now() - started) / 1000);
-    onProgress?.(done, total, done / seconds);
+    const elapsed = performance.now() - started - (gate?.pausedMs || 0);
+    onProgress?.(done, probe.total, done / Math.max(0.001, elapsed / 1000));
   }
   return new Blob(chunks);
 }
@@ -93,15 +139,19 @@ async function probeSize(url) {
     throw Error(`无法读取文件大小 HTTP ${response.status}`);
   await response.body?.cancel();
   const range = response.headers.get("content-range");
-  if (range) return Number(range.split("/").pop()) || 0;
-  return Number(response.headers.get("content-length")) || 0;
+  const ranged = response.status === 206 && !!range;
+  const total = ranged
+    ? Number(range.split("/").pop()) || 0
+    : Number(response.headers.get("content-length")) || 0;
+  return { total, ranged };
 }
 
-function rangedStream(url, total, onProgress) {
+function rangedStream(url, total, onProgress, gate) {
   let start = 0;
   const started = performance.now();
   return new ReadableStream({
     async pull(controller) {
+      await gate?.wait();
       if (start >= total) {
         controller.close();
         return;
@@ -129,8 +179,8 @@ function rangedStream(url, total, onProgress) {
       }
       controller.enqueue(chunk);
       start = end + 1;
-      const seconds = Math.max(0.001, (performance.now() - started) / 1000);
-      onProgress?.(start, total, start / seconds);
+      const elapsed = performance.now() - started - (gate?.pausedMs || 0);
+      onProgress?.(start, total, start / Math.max(0.001, elapsed / 1000));
     },
   });
 }
@@ -226,10 +276,11 @@ function packagePath(name) {
   return name.split("/").slice(1).join("/");
 }
 
-async function collectBasePackage(url, onDownload) {
-  const total = await probeSize(url);
+async function collectBasePackage(url, onDownload, gate) {
+  const { total, ranged } = await probeSize(url);
   if (!total) throw Error("无法读取官方底包大小");
-  const stream = rangedStream(url, total, onDownload).pipeThrough(
+  if (!ranged) throw Error("官方底包源站不支持分段下载");
+  const stream = rangedStream(url, total, onDownload, gate).pipeThrough(
     new DecompressionStream("gzip"),
   );
   const files = new Map();
@@ -314,7 +365,7 @@ async function runFlashScript(fastboot, files, steps, onFlash, onCommand) {
   }
 }
 
-async function issueAuthorization(request, onProgress) {
+async function issueAuthorization(request, onProgress, gate) {
   const fd = new FormData();
   fd.append("file", request, "request.zip");
   const result = await new Promise((resolve, reject) => {
@@ -342,13 +393,15 @@ async function issueAuthorization(request, onProgress) {
     };
     xhr.send(fd);
   });
-  const blob = await downloadBlob(result.download, (done, total, speed) => {
-    onProgress?.("下载授权包", done, total, speed);
-  });
+  const blob = await downloadBlob(
+    result.download,
+    (done, total, speed) => onProgress?.("下载授权包", done, total, speed),
+    gate,
+  );
   return { blob, name: result.filename || "authorization.zip" };
 }
 
-async function sendSideload(adb, source, onProgress, total) {
+async function sendSideload(adb, source, onProgress, total, gate) {
   const socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
@@ -376,6 +429,7 @@ async function sendSideload(adb, source, onProgress, total) {
     return source(offset, len);
   };
   while (true) {
+    await gate?.wait();
     const cmd = new TextDecoder().decode(await readExact(8));
     if (cmd === "DONEDONE") break;
     if (cmd === "FAILFAIL") throw Error("TWRP 拒绝刷机包");
@@ -488,6 +542,8 @@ function App() {
     [message, setMessage] = useState(""),
     [mockMode, setMockMode] = useState(false);
   const [toast, setToast] = useState(null);
+  const [paused, setPaused] = useState(false);
+  const gate = useRef(createGate()).current;
   const toastId = useRef(0);
   const showError = (error) =>
     setToast({ text: error.message || String(error), id: (toastId.current += 1) });
@@ -501,6 +557,22 @@ function App() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [commandLog]);
+  const togglePause = () => {
+    if (gate.paused) gate.resume();
+    else gate.pause();
+    setPaused(gate.paused);
+  };
+  const begin = (label) => {
+    gate.reset();
+    setPaused(false);
+    setBusy(label);
+  };
+  const finish = () => {
+    gate.reset();
+    setPaused(false);
+    setBusy("");
+    setProgress(null);
+  };
   const run = async (command, action) => {
     logCommand(command);
     return action();
@@ -536,10 +608,13 @@ function App() {
   };
   const flashBase = async () => {
     if (!fastboot) return;
-    setBusy("下载官方底包");
+    begin("下载官方底包");
     try {
-      const files = await collectBasePackage(BASE, (done, total, speed) =>
-        setProgress({ label: "下载官方底包", done, total, speed }),
+      const files = await collectBasePackage(
+        BASE,
+        (done, total, speed) =>
+          setProgress({ label: "下载官方底包", done, total, speed }),
+        gate,
       );
       const script = files.get(SCRIPT);
       if (!script) throw Error(`官方底包中没有 ${SCRIPT}`);
@@ -554,16 +629,18 @@ function App() {
     } catch (e) {
       showError(e);
     } finally {
-      setBusy("");
-      setProgress(null);
+      finish();
     }
   };
   const bootTwrp = async () => {
     if (!fastboot) return;
-    setBusy("启动 TWRP");
+    begin("启动 TWRP");
     try {
-      const blob = await downloadBlob(TWRP, (done, total, speed) =>
-        setProgress({ label: "下载 TWRP", done, total, speed }),
+      const blob = await downloadBlob(
+        TWRP,
+        (done, total, speed) =>
+          setProgress({ label: "下载 TWRP", done, total, speed }),
+        gate,
       );
       await run("fastboot boot <qlp_twrp.img>", () =>
         fastboot.bootBlob(blob, (p) =>
@@ -585,32 +662,32 @@ function App() {
     } catch (e) {
       showError(e);
     } finally {
-      setBusy("");
-      setProgress(null);
+      finish();
     }
   };
   const authorize = async () => {
     if (!adb) return;
-    setBusy("采集中");
+    begin("采集中");
     try {
       const request = await run(
         "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
-        () => pushAndCollect(adb),
+        () => pushAndCollect(adb, gate),
       );
       setBusy("提交授权");
       const issued = await issueAuthorization(
         request,
         (label, done, total, speed) =>
           setProgress({ label, done, total, speed }),
+        gate,
       );
       setBusy("刷入授权包");
       await run(`adb sideload ${issued.name}`, () =>
         sendSideload(
           adb,
           issued.blob,
-          (done, total) =>
-            setProgress({ label: "刷入授权包", done, total }),
+          (done, total) => setProgress({ label: "刷入授权包", done, total }),
           issued.blob.size,
+          gate,
         ),
       );
       setMessage("授权包已自动刷入");
@@ -618,13 +695,12 @@ function App() {
     } catch (e) {
       showError(e);
     } finally {
-      setBusy("");
-      setProgress(null);
+      finish();
     }
   };
   const flash = async () => {
     if (!adb || !rom) return;
-    setBusy("下载并刷入");
+    begin("下载并刷入");
     try {
       const assets = rom.assets
         .filter((a) => /\.part-[ab]-\d+$/.test(a.name))
@@ -664,7 +740,7 @@ function App() {
         throw Error("刷机包偏移超出分卷范围");
       };
       await run("adb sideload release parts", () =>
-        sendSideload(adb, source, () => {}, total),
+        sendSideload(adb, source, () => {}, total, gate),
       );
       await run("adb reboot", () => adb.power.reboot());
       setStep(5);
@@ -672,11 +748,12 @@ function App() {
     } catch (e) {
       showError(e);
     } finally {
-      setBusy("");
-      setProgress(null);
+      finish();
     }
   };
   const restart = () => {
+    gate.reset();
+    setPaused(false);
     setFastboot(null);
     setAdb(null);
     setRom(null);
@@ -684,6 +761,12 @@ function App() {
     setMessage("");
     setStep(0);
   };
+  const pauseButton = busy ? (
+    <button type="button" className="secondary" onClick={togglePause}>
+      <span className="material-icons">{paused ? "play_arrow" : "pause"}</span>
+      {paused ? "继续" : "暂停"}
+    </button>
+  ) : null;
   const titles = ["连接", "底包", "TWRP", "授权", "刷机包", "完成"];
   const fallback = { label: busy || "等待操作", done: 0, total: 1 };
   return (
@@ -716,7 +799,7 @@ function App() {
                   onChange={(event) => setMockMode(event.target.checked)}
                   disabled={!!busy}
                 />
-                Mock 模式，跳过 adb 与 fastboot 的设备通信
+                Mock 模式
               </label>
               {message && <div className="result">{message}</div>}
             </Panel>
@@ -727,7 +810,7 @@ function App() {
             <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
             <Panel>
-              <Actions onClick={flashBase} disabled={!fastboot || !!busy}>
+              <Actions extra={pauseButton} onClick={flashBase} disabled={!fastboot || !!busy}>
                 {busy || "下载并刷入官方底包"}
               </Actions>
               <Progress {...(progress || fallback)} />
@@ -739,7 +822,7 @@ function App() {
           <Page title="临时启动 TWRP" icon="memory">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
             <Panel>
-              <Actions onClick={bootTwrp} disabled={!fastboot || !!busy}>
+              <Actions extra={pauseButton} onClick={bootTwrp} disabled={!fastboot || !!busy}>
                 {busy || "自动启动 TWRP"}
               </Actions>
               <Progress {...(progress || fallback)} />
@@ -751,7 +834,7 @@ function App() {
           <Page title="自动授权" icon="vpn_key">
             <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
             <Panel>
-              <Actions onClick={authorize} disabled={!adb || !!busy}>
+              <Actions extra={pauseButton} onClick={authorize} disabled={!adb || !!busy}>
                 {busy || "开始自动授权"}
               </Actions>
               <Progress {...(progress || fallback)} />
@@ -779,7 +862,7 @@ function App() {
                   </option>
                 ))}
               </select>
-              <Actions onClick={flash} disabled={!rom || !adb || !!busy}>
+              <Actions extra={pauseButton} onClick={flash} disabled={!rom || !adb || !!busy}>
                 {busy || "下载并自动刷入"}
               </Actions>
               <Progress {...(progress || fallback)} />
@@ -841,12 +924,13 @@ function Page({ title, icon, children }) {
 function Panel({ children }) {
   return <div className="panel">{children}</div>;
 }
-function Actions({ onClick, disabled, children }) {
+function Actions({ onClick, disabled, children, extra }) {
   return (
     <div className="actions">
       <button onClick={onClick} disabled={disabled}>
         {children}
       </button>
+      {extra}
     </div>
   );
 }
