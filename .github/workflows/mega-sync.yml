@@ -1,0 +1,58 @@
+name: Mega ROM watcher
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: mega-rom-sync
+  cancel-in-progress: false
+jobs:
+  download:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: a
+            start: 0
+            end: 4457865579
+          - id: b
+            start: 4457865580
+            end: 8915731159
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 20, cache: npm}
+      - run: npm ci
+      - name: Download Mega range
+        env:
+          MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
+          RANGE_START: ${{ matrix.start }}
+          RANGE_END: ${{ matrix.end }}
+          OUTPUT: range-${{ matrix.id }}.bin
+        run: node scripts/mega-range.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mega-sync-${{ matrix.id }}
+          path: range-${{ matrix.id }}.bin
+          compression-level: 0
+          retention-days: 2
+  publish:
+    needs: download
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: ranges, pattern: mega-sync-*, merge-multiple: false}
+      - name: Publish versioned release
+        env: {GH_TOKEN: ${{ github.token }}}
+        run: |
+          set -euo pipefail
+          tag="rom-$(date -u +%Y%m%d%H%M%S)"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "刷机包 $tag" --notes '由 Mega watcher 自动同步。分卷按文件名顺序拼接。'
+          for side in a b; do
+            split -b 1900m -d -a 3 "ranges/mega-sync-$side/range-$side.bin" "odin-rom.zip.part-$side-"
+            for f in odin-rom.zip.part-$side-*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"; done
+          done
