@@ -20,8 +20,7 @@ jobs:
       - name: Download Mega first range
         env:
           MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
-          RANGE_START: 0
-          RANGE_END: 4457865579
+          RANGE_SIDE: a
           OUTPUT: range-a.bin
           NAME_OUTPUT: rom-name.txt
           SIZE_OUTPUT: rom-size.txt
@@ -47,8 +46,7 @@ jobs:
       - name: Download Mega second range
         env:
           MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
-          RANGE_START: 4457865580
-          RANGE_END: 8915731159
+          RANGE_SIDE: b
           OUTPUT: range-b.bin
           NAME_OUTPUT: rom-name.txt
           SIZE_OUTPUT: rom-size.txt
