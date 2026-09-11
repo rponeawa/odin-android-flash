@@ -308,9 +308,10 @@ async function extractTarStream(stream, onEntry) {
     const header = src.take(512);
     const name = text(header.subarray(0, 100));
     if (!name) break;
+    const kind = String.fromCharCode(header[156]);
     const size = parseInt(text(header.subarray(124, 136)), 8) || 0;
     const padding = Math.ceil(size / 512) * 512 - size;
-    const sink = await onEntry(name, size);
+    const sink = kind === "x" || kind === "g" ? null : await onEntry(name, size);
     let left = size;
     while (left > 0) {
       if (!(await src.fill(1))) throw Error(t("baseTruncated", { name }));
@@ -325,10 +326,6 @@ async function extractTarStream(stream, onEntry) {
     await sink?.end();
   }
   await src.cancel();
-}
-
-function packagePath(name) {
-  return name.split("/").slice(1).join("/");
 }
 
 async function basePackageStream(source, onProgress, gate) {
@@ -349,7 +346,7 @@ async function collectBasePackage(source, onDownload, gate) {
     const sink = blobSink();
     return {
       write: sink.write,
-      end: () => files.set(packagePath(name), sink.end()),
+      end: () => files.set(name, sink.end()),
     };
   });
   return files;
@@ -399,13 +396,23 @@ function parseFlashScript(script) {
   return steps;
 }
 
-async function runFlashScript(fastboot, files, steps, onFlash, run) {
+function packageRoot(files) {
+  let root = null;
+  for (const name of files.keys()) {
+    if (name !== SCRIPT && !name.endsWith(`/${SCRIPT}`)) continue;
+    const candidate = name.slice(0, name.length - SCRIPT.length);
+    if (root === null || candidate.length < root.length) root = candidate;
+  }
+  return root;
+}
+
+async function runFlashScript(fastboot, resolve, steps, onFlash, run) {
   let index = 0;
   for (const step of steps) {
     index += 1;
     const label = `${index}/${steps.length}`;
     if (step.verb === "flash") {
-      const image = files.get(step.file);
+      const image = resolve(step.file);
       if (!image) throw Error(t("baseMissingFile", { file: step.file }));
       await run(`fastboot flash ${step.partition} ${step.file}`, () =>
         fastboot.flashBlob(step.partition, image, (p) =>
@@ -658,7 +665,7 @@ function App() {
       ),
     );
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [commandLog]);
   const togglePause = () => {
     if (gate.paused) gate.resume();
@@ -801,14 +808,15 @@ function App() {
         (done, total, speed) => setProgress({ label, done, total, speed }),
         gate,
       );
-      const script = files.get(SCRIPT);
-      if (!script) throw Error(t("baseNoScript", { script: SCRIPT }));
-      const steps = parseFlashScript(await script.text());
+      const root = packageRoot(files);
+      if (root === null) throw Error(t("baseNoScript", { script: SCRIPT }));
+      const resolve = (file) => files.get(root + file);
+      const steps = parseFlashScript(await resolve(SCRIPT).text());
       if (!steps.length) throw Error(t("baseNoCommands", { script: SCRIPT }));
       setBusy(t("busyFlashBase"));
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
-      await runFlashScript(fastboot, files, steps, onFlash, run);
+      await runFlashScript(fastboot, resolve, steps, onFlash, run);
       notify(t("baseFlashed", { script: SCRIPT, count: steps.length }));
       advance();
     } catch (e) {
@@ -945,33 +953,44 @@ function App() {
       let downloaded = 0;
       const started = performance.now();
       const source = async (offset, len) => {
-        let base = 0;
-        for (const a of assets) {
-          const size = Number(a.size || 0);
-          if (offset < base + size) {
-            const local = offset - base;
-            const r = await fetch(proxied(a.browser_download_url), {
-              headers: { Range: `bytes=${local}-${local + len - 1}` },
-            });
-            if (!r.ok && r.status !== 206)
-              throw Error(t("partDownloadFailed", { status: r.status }));
-            const data = new Uint8Array(await r.arrayBuffer());
-            downloaded = Math.max(downloaded, offset + data.length);
-            const seconds = Math.max(
-              0.001,
-              (performance.now() - started) / 1000,
-            );
-            setProgress({
-              label: t("progFlashRom"),
-              done: downloaded,
-              total,
-              speed: downloaded / seconds,
-            });
-            return data;
+        const out = new Uint8Array(len);
+        let filled = 0;
+        while (filled < len) {
+          const want = offset + filled;
+          let base = 0;
+          let part = null;
+          let local = 0;
+          for (const a of assets) {
+            const size = Number(a.size || 0);
+            if (want < base + size) {
+              part = a;
+              local = want - base;
+              break;
+            }
+            base += size;
           }
-          base += size;
+          if (!part) throw Error(t("romOffset"));
+          const take = Math.min(len - filled, Number(part.size || 0) - local);
+          const r = await fetch(proxied(part.browser_download_url), {
+            headers: { Range: `bytes=${local}-${local + take - 1}` },
+          });
+          if (!r.ok && r.status !== 206)
+            throw Error(t("partDownloadFailed", { status: r.status }));
+          const data = new Uint8Array(await r.arrayBuffer());
+          if (!data.length)
+            throw Error(t("partDownloadFailed", { status: r.status }));
+          out.set(data, filled);
+          filled += data.length;
         }
-        throw Error(t("romOffset"));
+        downloaded = Math.max(downloaded, offset + filled);
+        const seconds = Math.max(0.001, (performance.now() - started) / 1000);
+        setProgress({
+          label: t("progFlashRom"),
+          done: downloaded,
+          total,
+          speed: downloaded / seconds,
+        });
+        return out;
       };
       await run("adb sideload release parts", () =>
         asSideload(() => sendSideload(device, source, () => {}, total, gate)),
