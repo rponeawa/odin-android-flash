@@ -54,7 +54,8 @@ button:disabled { background: #9aa0a6; }
 .result { margin-top: 18px; color: #137333; }
 select, input { width: 100%; padding: 10px; font: inherit; }
 .progress { width: 100%; margin-top: 18px; color: #5f6368; }
-.progress progress { width: 100%; height: 12px; }
+.progress-track { width: 100%; height: 12px; margin-top: 8px; overflow: hidden; background: #e0e3e7; border-radius: 0; }
+.progress-fill { height: 100%; background: var(--accent); transition: width 120ms linear; }
 a { color: var(--accent); }
 
 .command-log {

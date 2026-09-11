@@ -606,12 +606,15 @@ function Actions({ onClick, disabled, children }) {
   );
 }
 function Progress({ label, done, total }) {
+  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   return (
     <div className="progress">
       <div>
-        {label} {total ? Math.round((done / total) * 100) : 0}%
+        {label} {percent}%
       </div>
-      <progress value={done} max={total || 1} />
+      <div className="progress-track" role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100">
+        <div className="progress-fill" style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 }
