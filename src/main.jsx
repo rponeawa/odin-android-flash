@@ -24,7 +24,7 @@ const COLLECT =
 const RANGE = 8 * 1024 * 1024;
 const BLOCK = 262144;
 const PART = 32 * 1024 * 1024;
-const SKIP = /^(userdata|cache|metadata)$/i;
+const SCRIPT = "flash_all.sh";
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -222,30 +222,96 @@ async function extractTarStream(stream, onEntry) {
   await src.cancel();
 }
 
-async function flashBasePackage(fastboot, url, onDownload, onFlash, onCommand) {
+function packagePath(name) {
+  return name.split("/").slice(1).join("/");
+}
+
+async function collectBasePackage(url, onDownload) {
   const total = await probeSize(url);
   if (!total) throw Error("无法读取官方底包大小");
   const stream = rangedStream(url, total, onDownload).pipeThrough(
     new DecompressionStream("gzip"),
   );
-  let flashed = 0;
-  await extractTarStream(stream, (name) => {
-    if (!/\.img$/i.test(name)) return null;
-    const partition = name.split("/").pop().replace(/\.img$/i, "");
-    if (SKIP.test(partition)) return null;
+  const files = new Map();
+  await extractTarStream(stream, (name, size) => {
+    if (!size || name.endsWith("/")) return null;
     const sink = blobSink();
     return {
       write: sink.write,
-      end: async () => {
-        const image = sink.end();
-        onCommand?.(`fastboot flash ${partition} <${name}>`);
-        await fastboot.flashBlob(partition, image, (p) => onFlash(partition, p));
-        flashed += 1;
-      },
+      end: () => files.set(packagePath(name), sink.end()),
     };
   });
-  if (!flashed) throw Error("官方底包中没有找到镜像文件");
-  return flashed;
+  return files;
+}
+
+function parseFlashScript(script) {
+  const steps = [];
+  let depth = 0;
+  for (const raw of script.split("\n")) {
+    const line = raw
+      .replace(/`dirname\s+\$0`|\$\(dirname\s+\$0\)/g, ".")
+      .trim();
+    if (!line || line.startsWith("#")) continue;
+    const opens = /^if\b/.test(line);
+    const closes = /(^|[\s;])fi$/.test(line);
+    if (opens) {
+      if (!closes) depth += 1;
+      continue;
+    }
+    if (closes) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth > 0) continue;
+    const call = line.match(/^fastboot\s+(.+)$/);
+    if (!call) continue;
+    const tokens = call[1]
+      .replace(/\s*(\|\||&&|;|\||\d?>[&\S]*).*$/, "")
+      .trim()
+      .split(/\s+/)
+      .filter((token) => token && !/^("\$@"|\$\*|\$@)$/.test(token));
+    const flags = [];
+    while (tokens.length && tokens[0].startsWith("-")) flags.push(tokens.shift());
+    const verb = tokens.shift();
+    if (verb === "flash" && tokens.length >= 2)
+      steps.push({
+        verb,
+        partition: tokens[0],
+        file: tokens[1].replace(/^\.\//, ""),
+        flags,
+      });
+    else if (verb === "erase" && tokens.length >= 1)
+      steps.push({ verb, partition: tokens[0], flags });
+    else if (verb === "set_active" && tokens.length >= 1)
+      steps.push({ verb, slot: tokens[0], flags });
+  }
+  return steps;
+}
+
+async function runFlashScript(fastboot, files, steps, onFlash, onCommand) {
+  let index = 0;
+  for (const step of steps) {
+    index += 1;
+    const label = `${index}/${steps.length}`;
+    if (step.verb === "flash") {
+      const image = files.get(step.file);
+      if (!image) throw Error(`底包缺少 ${step.file}`);
+      onCommand?.(`fastboot flash ${step.partition} ${step.file}`);
+      await fastboot.flashBlob(step.partition, image, (p) =>
+        onFlash(`刷入 ${step.partition} ${label}`, p),
+      );
+    } else if (step.verb === "erase") {
+      onCommand?.(`fastboot erase ${step.partition}`);
+      onFlash(`擦除 ${step.partition} ${label}`, 0);
+      await fastboot.runCommand(`erase:${step.partition}`);
+      onFlash(`擦除 ${step.partition} ${label}`, 1);
+    } else if (step.verb === "set_active") {
+      onCommand?.(`fastboot set_active ${step.slot}`);
+      onFlash(`切换槽位 ${step.slot} ${label}`, 0);
+      await fastboot.runCommand(`set_active:${step.slot}`);
+      onFlash(`切换槽位 ${step.slot} ${label}`, 1);
+    }
+  }
 }
 
 async function issueAuthorization(request, onProgress) {
@@ -470,25 +536,20 @@ function App() {
   };
   const flashBase = async () => {
     if (!fastboot) return;
-    setBusy("下载并刷入官方底包");
+    setBusy("下载官方底包");
     try {
-      const flashed = await flashBasePackage(
-        fastboot,
-        BASE,
-        (done, total, speed) =>
-          setProgress({ label: "下载官方底包", done, total, speed }),
-        (partition, p) =>
-          setProgress({
-            label: `刷入 ${partition}`,
-            done: Math.round(p * 1000),
-            total: 1000,
-          }),
-        logCommand,
+      const files = await collectBasePackage(BASE, (done, total, speed) =>
+        setProgress({ label: "下载官方底包", done, total, speed }),
       );
-      await run("fastboot erase userdata", () =>
-        fastboot.runCommand("erase:userdata"),
-      );
-      setMessage(`已刷入 ${flashed} 个分区，设备保持在 fastboot`);
+      const script = files.get(SCRIPT);
+      if (!script) throw Error(`官方底包中没有 ${SCRIPT}`);
+      const steps = parseFlashScript(await script.text());
+      if (!steps.length) throw Error(`${SCRIPT} 中没有可执行的 fastboot 命令`);
+      setBusy("刷入官方底包");
+      const onFlash = (label, p) =>
+        setProgress({ label, done: Math.round(p * 1000), total: 1000 });
+      await runFlashScript(fastboot, files, steps, onFlash, logCommand);
+      setMessage(`已执行 ${SCRIPT} 的 ${steps.length} 条命令，设备保持在 fastboot`);
       setStep(2);
     } catch (e) {
       showError(e);
