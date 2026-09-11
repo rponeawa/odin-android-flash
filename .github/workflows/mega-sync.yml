@@ -26,7 +26,13 @@ jobs:
           NAME_OUTPUT: rom-name.txt
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
-        with: {name: mega-sync-a, path: 'range-a.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
+        with:
+          name: mega-sync-a
+          path: |
+            range-a.bin
+            rom-name.txt
+          compression-level: 0
+          retention-days: 3
   download-b:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '47 */12 * * *'
     runs-on: ubuntu-latest
@@ -45,4 +51,10 @@ jobs:
           NAME_OUTPUT: rom-name.txt
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
-        with: {name: mega-sync-b, path: 'range-b.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
+        with:
+          name: mega-sync-b
+          path: |
+            range-b.bin
+            rom-name.txt
+          compression-level: 0
+          retention-days: 3
