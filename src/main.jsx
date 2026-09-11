@@ -56,18 +56,56 @@ async function pushAndCollect(adb) {
   if (!out.size) throw Error("采集程序没有生成授权请求");
   return out;
 }
-async function issueAuthorization(request) {
+async function downloadBlob(url, onProgress) {
+  const response = await fetch(url);
+  if (!response.ok) throw Error(`下载失败 HTTP ${response.status}`);
+  const total = Number(response.headers.get("content-length")) || 0;
+  if (!response.body) return response.blob();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let done = 0;
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    chunks.push(part.value);
+    done += part.value.length;
+    onProgress?.(done, total);
+  }
+  return new Blob(chunks);
+}
+async function issueAuthorization(request, onProgress) {
   const fd = new FormData();
   fd.append("file", request, "request.zip");
-  const r = await fetch(AUTH, { method: "POST", body: fd });
-  if (!r.ok) throw Error(`授权服务 HTTP ${r.status}`);
-  const d = await r.json();
-  if (!d.ok || !d.download) throw Error(d.error || "授权服务未返回授权包");
-  return {
-    blob: await fetch(d.download).then((x) => x.blob()),
-    name: d.filename || "authorization.zip",
-  };
+  const result = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", AUTH);
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.("上传授权请求", event.loaded, event.total);
+    };
+    xhr.onerror = () => reject(Error("授权请求网络错误"));
+    xhr.ontimeout = () => reject(Error("授权请求超时"));
+    xhr.timeout = 120000;
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(Error(`授权服务 HTTP ${xhr.status}`));
+        return;
+      }
+      const data = xhr.response;
+      if (!data?.ok || !data.download) {
+        reject(Error(data?.error || "授权服务未返回授权包"));
+        return;
+      }
+      resolve(data);
+    };
+    xhr.send(fd);
+  });
+  const blob = await downloadBlob(result.download, (done, total) => {
+    onProgress?.("下载授权包", done, total);
+  });
+  return { blob, name: result.filename || "authorization.zip" };
 }
+
 async function sendSideload(adb, source, onProgress, total) {
   const socket = await adb.createSocket(`sideload-host:${total}:262144`);
   const writer = socket.writable.getWriter();
@@ -186,7 +224,9 @@ function App() {
     if (!fastboot) return;
     setBusy("启动 TWRP");
     try {
-      const blob = await fetch(TWRP).then((r) => r.blob());
+      const blob = await downloadBlob(TWRP, (done, total) =>
+        setProgress({ label: "下载 TWRP", done, total }),
+      );
       await fastboot.bootBlob(blob, (p) =>
         setProgress({
           label: "上传 TWRP",
@@ -212,7 +252,9 @@ function App() {
     try {
       const req = await pushAndCollect(adb);
       setBusy("提交授权");
-      const issued = await issueAuthorization(req);
+      const issued = await issueAuthorization(req, (label, done, total) =>
+        setProgress({ label, done, total }),
+      );
       setBusy("刷入授权包");
       await sendSideload(
         adb,
