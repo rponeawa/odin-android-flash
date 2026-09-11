@@ -32,6 +32,10 @@ jobs:
           unzip -p ranges/a.zip > ranges/range-a.bin
           unzip -p ranges/b.zip > ranges/range-b.bin
           title=$(unzip -p ranges/a.zip rom-name.txt)
+          size_a=$(unzip -p ranges/a.zip rom-size.txt)
+          size_b=$(unzip -p ranges/b.zip rom-size.txt)
+          test "$size_a" = "$size_b"
+          test "$size_a" = "8915731160"
           tag="rom-$(date -u +%Y%m%d%H%M%S)"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes '由 Mega watcher 自动同步。'
           for side in a b; do split -b 1900m -d -a 3 "ranges/range-$side.bin" "odin-rom.zip.part-$side-"; for f in odin-rom.zip.part-$side-*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"; done; done
