@@ -1006,7 +1006,6 @@ function App() {
     setAdb(null);
     setRom(null);
     setProgress(null);
-    notify("");
     setStep(0);
   };
   const toggleLang = () => {
