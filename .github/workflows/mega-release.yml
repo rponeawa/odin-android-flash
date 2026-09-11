@@ -7,56 +7,39 @@ on:
     - cron: '17 */6 * * *'
 permissions:
   contents: write
+  actions: read
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-    steps:
-      - id: meta
-        run: echo "tag=rom-latest" >> "$GITHUB_OUTPUT"
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release view rom-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create rom-latest --repo "$GITHUB_REPOSITORY" --title '最新刷机包' --notes '由 Mega 同步。分卷按文件名顺序拼接。'
-  ranges:
-    needs: prepare
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: a
-            start: 0
-            end: 4457865579
-          - id: b
-            start: 4457865580
-            end: 8915731159
+  publish-artifacts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: Download Mega range
-        env:
-          MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
-          RANGE_START: ${{ matrix.start }}
-          RANGE_END: ${{ matrix.end }}
-          OUTPUT: range-${{ matrix.id }}.bin
-        run: node scripts/mega-range.mjs
-      - name: Split and upload release assets
+      - name: Prepare latest release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          split -b 1900m -d -a 3 "range-${{ matrix.id }}.bin" "odin-rom.zip.part-${{ matrix.id }}-"
-          for f in odin-rom.zip.part-${{ matrix.id }}-*; do
-            for n in 1 2 3 4 5; do
-              if gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber; then break; fi
-              sleep 10
+          gh release view rom-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create rom-latest --repo "$GITHUB_REPOSITORY" --title '最新刷机包' --notes '由 Mega 同步。分卷按文件名顺序拼接。'
+      - name: Locate completed Mega artifacts
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | [.id,.name,.workflow_run.id] | @tsv' | awk '$2=="mega-range-a" {print "a=" $1} $2=="mega-range-b" {print "b=" $1}' >> "$GITHUB_OUTPUT"
+          test -s "$GITHUB_OUTPUT"
+      - name: Download and publish split assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          A_ID: ${{ steps.find.outputs.a }}
+          B_ID: ${{ steps.find.outputs.b }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          for pair in "a:$A_ID" "b:$B_ID"; do
+            id=${pair#*:}; side=${pair%%:*}
+            gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "work/$side.zip"
+            unzip -p "work/$side.zip" > "work/range-$side.bin"
+            split -b 1900m -d -a 3 "work/range-$side.bin" "work/odin-rom.zip.part-$side-"
+            for f in work/odin-rom.zip.part-$side-*; do
+              gh release upload rom-latest "$f" --repo "$GITHUB_REPOSITORY" --clobber
             done
           done
