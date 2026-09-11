@@ -35,7 +35,7 @@ const ZH = {
   navDone: "完成",
 
   connectTitle: "连接设备",
-  connectText: "让 MIX 4 进入 fastboot 模式，用 Chrome 或 Edge 连接。",
+  connectText: "让 MIX 4 进入 Fastboot 模式，用 Chrome 或 Edge 连接。",
   connectAction: "连接设备",
 
   baseTitle: "官方底包",
@@ -63,7 +63,7 @@ const ZH = {
   doneText: "刷机包已刷入。设备没有自动重启时，在 TWRP 中选择重启。",
   home: "返回主页",
 
-  busyConnectFastboot: "连接 fastboot",
+  busyConnectFastboot: "连接 Fastboot",
   busyDownloadBase: "下载官方底包",
   busyReadLocalBase: "读取本地底包",
   busyFlashBase: "刷入官方底包",
@@ -84,9 +84,9 @@ const ZH = {
   progErase: "擦除 {partition} {index}",
   progSlot: "切换槽位 {slot} {index}",
 
-  connectedFastboot: "已连接 fastboot",
+  connectedFastboot: "已连接 Fastboot",
   skippedBase: "已跳过官方底包",
-  baseFlashed: "已执行 {script} 的 {count} 条命令，设备保持在 fastboot",
+  baseFlashed: "已执行 {script} 的 {count} 条命令，设备保持在 Fastboot",
   twrpBooted: "TWRP 已启动，请等待 ADB",
   gotAuth: "已取得 {name}，请在 TWRP 中选择 高级 - ADB Sideload",
   authFlashed: "授权包已刷入",
@@ -95,7 +95,7 @@ const ZH = {
 
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
   noFastbootDevice:
-    "没有找到 fastboot 设备。请让手机进入 fastboot 后用数据线连接，并在弹出的窗口中选择设备",
+    "没有找到 Fastboot 设备。请让手机进入 Fastboot 后用数据线连接，并在弹出的窗口中选择设备",
   noAdbDeviceMode:
     "没有找到 ADB 设备。请确认 TWRP 已在对应模式，并在手机上允许这台电脑调试",
   notSideload:
@@ -110,7 +110,7 @@ const ZH = {
   baseTruncated: "底包数据在 {name} 处中断",
   baseMissingFile: "底包缺少 {file}",
   baseNoScript: "官方底包中没有 {script}",
-  baseNoCommands: "{script} 中没有可执行的 fastboot 命令",
+  baseNoCommands: "{script} 中没有可执行的 Fastboot 命令",
   collectEmpty: "采集程序没有生成授权请求",
   authHttp: "授权服务 HTTP {status}",
   authNetwork: "授权请求网络错误",
@@ -160,7 +160,7 @@ const EN = {
   navDone: "Done",
 
   connectTitle: "Connect the device",
-  connectText: "Put the MIX 4 in fastboot mode and connect it with Chrome or Edge.",
+  connectText: "Put the MIX 4 in Fastboot mode and connect it with Chrome or Edge.",
   connectAction: "Connect device",
 
   baseTitle: "Official firmware",
@@ -188,7 +188,7 @@ const EN = {
   doneText: "The ROM is flashed. If the device does not reboot on its own, reboot it from TWRP.",
   home: "Back to start",
 
-  busyConnectFastboot: "Connecting fastboot",
+  busyConnectFastboot: "Connecting Fastboot",
   busyDownloadBase: "Downloading firmware",
   busyReadLocalBase: "Reading local firmware",
   busyFlashBase: "Flashing firmware",
@@ -211,7 +211,7 @@ const EN = {
 
   connectedFastboot: "Fastboot connected",
   skippedBase: "Firmware step skipped",
-  baseFlashed: "Ran {count} commands from {script}; the device stays in fastboot",
+  baseFlashed: "Ran {count} commands from {script}; the device stays in Fastboot",
   twrpBooted: "TWRP booted, waiting for ADB",
   gotAuth: "Got {name}. In TWRP choose Advanced - ADB Sideload",
   authFlashed: "Authorization flashed",
@@ -220,7 +220,7 @@ const EN = {
 
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
   noFastbootDevice:
-    "No fastboot device found. Put the phone in fastboot, connect it by cable and pick it in the dialog.",
+    "No Fastboot device found. Put the phone in Fastboot, connect it by cable and pick it in the dialog.",
   noAdbDeviceMode:
     "No ADB device found. Check that TWRP is in the right mode and allow this computer on the phone.",
   notSideload:
@@ -235,7 +235,7 @@ const EN = {
   baseTruncated: "The firmware data stops at {name}",
   baseMissingFile: "The firmware has no {file}",
   baseNoScript: "The firmware has no {script}",
-  baseNoCommands: "{script} has no fastboot commands to run",
+  baseNoCommands: "{script} has no Fastboot commands to run",
   collectEmpty: "The collector produced no authorization request",
   authHttp: "Authorization service, HTTP {status}",
   authNetwork: "Authorization request network error",
