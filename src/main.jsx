@@ -20,6 +20,8 @@ const PROXY = "/api/fetch?url=";
 const TWRP =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_twrp.img";
 const AUTHOR = "https://www.coolapk.com/u/4874574";
+const GROUP = "https://qm.qq.com/q/LslPTWDqo0";
+const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
 const RANGE = 8 * 1024 * 1024;
@@ -1181,6 +1183,12 @@ function App() {
               </a>
             </p>
             <p className="credit">{t("creditSync")}</p>
+            <p className="credit">
+              {t("creditQq")}
+              <a href={GROUP} target="_blank" rel="noreferrer">
+                {GROUP_ID}
+              </a>
+            </p>
           </Page>
         )}
         {mode && (
