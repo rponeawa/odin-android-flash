@@ -4,7 +4,7 @@ const ZH = {
   log: "日志",
   logEmpty: "等待执行命令",
   welcomeTitle: "开始",
-  creditBy: "刷机包作者：酷安",
+  creditBy: "ROM 作者：酷安",
   creditName: "@秋城落叶",
   creditSync: "刷机包自动同步于其分发的 Mega 网盘",
   creditQq: "QQ 群【MIX4@秋城落叶】：",
