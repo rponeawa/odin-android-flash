@@ -8,7 +8,7 @@ import './style.css';
 
 const BASE='https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS1.0.2.0.UKMCNXM/odin_images_OS1.0.2.0.UKMCNXM_20240425.0000.00_14.0_cn_d3eb80577c.tgz';
 const REPO='https://api.github.com/repos/rponeawa/odin-android-flash/releases';
-const AUTH='https://file.xkji.com/xiaomi/api/issue';
+const AUTH='/api/issue';
 const TWRP='https://github.com/rponeawa/odin-android-flash/releases/latest/download/qlp_twrp.img';
 const CHUNK=64*1024;
 
