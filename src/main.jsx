@@ -231,9 +231,14 @@ function App() {
       ...items.slice(-39),
       `${new Date().toLocaleTimeString()}  ${text}`,
     ]);
-  const mockCommand = async (text, ms = 350) => {
-    logCommand(`[mock] ${text}`);
-    await new Promise((resolve) => setTimeout(resolve, ms));
+  const executeCommand = async ({ name, mock = testMode, action, delay = 350 }) => {
+    logCommand(`${mock ? "[mock] " : ""}${name}`);
+    if (mock) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return undefined;
+    }
+    if (typeof action !== "function") throw Error(`未实现命令：${name}`);
+    return action();
   };
   const simulate = async (label) => {
     setBusy(label);
@@ -260,8 +265,8 @@ function App() {
   }, []);
   const connect = async () => {
     if (testMode) {
-      await mockCommand("usb.requestDevice(filters=fastboot)");
-      await mockCommand("fastboot getvar product");
+      await executeCommand({ name: "usb.requestDevice(filters=fastboot)" });
+      await executeCommand({ name: "fastboot getvar product" });
       setMessage("测试设备已连接");
       setStep(1);
       return;
@@ -282,9 +287,9 @@ function App() {
   };
   const bootTwrp = async () => {
     if (testMode) {
-      await mockCommand("GET qlp_twrp.img");
-      await mockCommand("fastboot download <qlp_twrp.img>", 600);
-      await mockCommand("fastboot boot");
+      await executeCommand({ name: "GET qlp_twrp.img", delay: 500 });
+      await executeCommand({ name: "fastboot download <qlp_twrp.img>", delay: 600 });
+      await executeCommand({ name: "fastboot boot" });
       setMessage("测试 TWRP 已启动");
       setStep(3);
       return;
@@ -292,18 +297,22 @@ function App() {
     if (!fastboot) return;
     setBusy("启动 TWRP");
     try {
-      logCommand("GET qlp_twrp.img");
-      const blob = await downloadBlob(TWRP, (done, total) =>
+      const blob = await executeCommand({
+        name: "GET qlp_twrp.img",
+        action: () => downloadBlob(TWRP, (done, total) =>
         setProgress({ label: "下载 TWRP", done, total }),
-      );
-      await fastboot.bootBlob(blob, (p) =>
+        ),
+      });
+      await executeCommand({
+        name: "fastboot boot <qlp_twrp.img>",
+        action: () => fastboot.bootBlob(blob, (p) =>
         setProgress({
           label: "上传 TWRP",
           done: p.bytesSent || 0,
           total: p.totalBytes || blob.size,
         }),
-      );
-      logCommand("fastboot boot <qlp_twrp.img>");
+        ),
+      });
       setMessage("TWRP 已启动，请等待 ADB");
       setStep(3);
       setBusy("等待 ADB");
@@ -318,11 +327,11 @@ function App() {
   };
   const flashBase = async () => {
     if (testMode) {
-      await mockCommand("GET official-base.tgz", 500);
+      await executeCommand({ name: "GET official-base.tgz", delay: 500 });
       for (const partition of ["boot", "vendor_boot", "dtbo", "vbmeta", "super"]) {
-        await mockCommand(`fastboot flash ${partition} <image>`, 400);
+        await executeCommand({ name: `fastboot flash ${partition} <image>`, delay: 400 });
       }
-      await mockCommand("fastboot erase userdata");
+      await executeCommand({ name: "fastboot erase userdata" });
       setMessage("测试底包已刷入，设备保持在 fastboot");
       setStep(2);
       return;
@@ -336,7 +345,10 @@ function App() {
       await flashBasePackage(fastboot, blob, (done, total) =>
         setProgress({ label: "刷入官方底包", done, total }),
       );
-      logCommand("fastboot erase userdata");
+      await executeCommand({
+        name: "fastboot erase userdata",
+        action: () => fastboot.runCommand("erase:userdata"),
+      });
       setMessage("官方底包已刷入，设备保持在 fastboot");
       setStep(2);
     } catch (e) {
@@ -348,12 +360,12 @@ function App() {
   };
   const authorize = async () => {
     if (testMode) {
-      await mockCommand("adb connect (TWRP)");
-      await mockCommand("adb push qlp_collect /tmp/qlp_collect");
-      await mockCommand("adb shell /tmp/qlp_collect qlp_flash");
-      await mockCommand("POST /api/issue request.zip", 500);
-      await mockCommand("GET authorization.zip", 500);
-      await mockCommand("adb sideload authorization.zip", 700);
+      await executeCommand({ name: "adb connect (TWRP)" });
+      await executeCommand({ name: "adb push qlp_collect /tmp/qlp_collect" });
+      await executeCommand({ name: "adb shell /tmp/qlp_collect qlp_flash" });
+      await executeCommand({ name: "POST /api/issue request.zip", delay: 500 });
+      await executeCommand({ name: "GET authorization.zip", delay: 500 });
+      await executeCommand({ name: "adb sideload authorization.zip", delay: 700 });
       setMessage("测试授权包已刷入");
       setStep(4);
       return;
@@ -385,9 +397,9 @@ function App() {
   };
   const flash = async () => {
     if (testMode) {
-      await mockCommand(`GET release parts for ${rom?.name || "selected ROM"}`, 500);
-      await mockCommand("adb sideload release parts", 1000);
-      await mockCommand("adb reboot");
+      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, delay: 500 });
+      await executeCommand({ name: "adb sideload release parts", delay: 1000 });
+      await executeCommand({ name: "adb reboot" });
       setMessage("测试刷机包已刷入，设备正在重启");
       setStep(5);
       return;
