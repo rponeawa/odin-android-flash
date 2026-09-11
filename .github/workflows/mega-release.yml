@@ -11,13 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Mega downloader
-        run: sudo apt-get update && sudo apt-get install -y megatools
+        run: npm ci
       - name: Download newest 秋城落叶 package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          megadl --path dist 'https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ'
+          MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/sync-mega.mjs
           file=$(find dist -type f | grep '秋城落叶' | sort | tail -n1)
           test -n "$file"
           cp "$file" dist/odin-rom.zip
