@@ -285,8 +285,12 @@ function App() {
     if (mockMode) {
       setBusy("下载 TWRP");
       await executeCommand({ name: "GET qlp_twrp.img", action: () => downloadBlob(TWRP, (done, total) => setProgress({ label: "下载 TWRP", done, total })) });
-      setProgress(null);
-      await executeCommand({ name: "fastboot download <qlp_twrp.img>", delay: 600 });
+      await executeCommand({ name: "fastboot download <qlp_twrp.img>", action: async () => {
+        for (let done = 0; done <= 10; done += 1) {
+          setProgress({ label: "上传 TWRP", done, total: 10 });
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+      } });
       await executeCommand({ name: "fastboot boot" });
       setMessage("测试 TWRP 已启动");
       setStep(3);
@@ -499,7 +503,7 @@ function App() {
               <Actions onClick={flashBase} disabled={!mockMode && (!fastboot || !!busy)}>
                 {busy || "下载并刷入官方底包"}
               </Actions>
-              {progress && <Progress {...progress} />}
+              <Progress {...(progress || { label: busy || "等待操作", done: 0, total: 1 })} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -511,7 +515,7 @@ function App() {
               <Actions onClick={bootTwrp} disabled={!mockMode && (!fastboot || !!busy)}>
                 {busy || "自动启动 TWRP"}
               </Actions>
-              {progress && <Progress {...progress} />}
+              <Progress {...(progress || { label: busy || "等待操作", done: 0, total: 1 })} />
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
