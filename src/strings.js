@@ -15,7 +15,6 @@ const ZH = {
   modeUpdateText: "只刷入新的刷机包",
   pause: "暂停",
   resume: "继续",
-  reconnectAdb: "重新连接 ADB",
   skip: "跳过",
   mockMode: "Mock 模式",
   waiting: "等待操作",
@@ -68,7 +67,6 @@ const ZH = {
   busyReadLocalBase: "读取本地底包",
   busyFlashBase: "刷入官方底包",
   busyBootTwrp: "启动 TWRP",
-  busyWaitAdb: "等待 ADB",
   busyConnectAdb: "连接 ADB",
   busyCollect: "采集中",
   busySubmit: "提交授权",
@@ -99,8 +97,6 @@ const ZH = {
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
   noFastbootDevice:
     "没有找到 fastboot 设备。请让手机进入 fastboot 后用数据线连接，并在弹出的窗口中选择设备",
-  noAdbDevice:
-    "没有找到 ADB 设备。请等待 TWRP 启动完成，并在手机上允许这台电脑调试",
   noAdbDeviceMode:
     "没有找到 ADB 设备。请确认 TWRP 已在对应模式，并在手机上允许这台电脑调试",
   notSideload:
@@ -144,7 +140,6 @@ const EN = {
   modeUpdateText: "Flashes a new ROM only",
   pause: "Pause",
   resume: "Resume",
-  reconnectAdb: "Reconnect ADB",
   skip: "Skip",
   mockMode: "Mock mode",
   waiting: "Idle",
@@ -197,7 +192,6 @@ const EN = {
   busyReadLocalBase: "Reading local firmware",
   busyFlashBase: "Flashing firmware",
   busyBootTwrp: "Booting TWRP",
-  busyWaitAdb: "Waiting for ADB",
   busyConnectAdb: "Connecting ADB",
   busyCollect: "Collecting",
   busySubmit: "Submitting",
@@ -228,8 +222,6 @@ const EN = {
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
   noFastbootDevice:
     "No fastboot device found. Put the phone in fastboot, connect it by cable and pick it in the dialog.",
-  noAdbDevice:
-    "No ADB device found. Wait for TWRP to finish booting and allow this computer on the phone.",
   noAdbDeviceMode:
     "No ADB device found. Check that TWRP is in the right mode and allow this computer on the phone.",
   notSideload:

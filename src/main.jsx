@@ -684,6 +684,18 @@ function App() {
       serial: next.serial || "",
     });
   };
+  const ensureAdb = async () => {
+    if (adb) return adb;
+    const next = await run("adb connect", () =>
+      mockMode
+        ? mockAdb()
+        : connectAdb().catch((e) => {
+            throw new StepError(t("noAdbDeviceMode"), e);
+          }),
+    );
+    attachAdb(next);
+    return next;
+  };
   const asSideload = async (action) => {
     setDevice((d) => (d ? { ...d, mode: "Recovery Sideload" } : d));
     try {
@@ -832,40 +844,6 @@ function App() {
       );
       notify(t("twrpBooted"));
       advance();
-      setBusy(t("busyWaitAdb"));
-      const device = await run("adb connect (TWRP)", () =>
-        mockMode
-          ? mockAdb()
-          : connectAdb().catch((e) => {
-              throw new StepError(
-                t("noAdbDevice"),
-                e,
-              );
-            }),
-      );
-      attachAdb(device);
-      notify(t("connected", { serial: device.serial }));
-    } catch (e) {
-      showError(e);
-    } finally {
-      finish();
-    }
-  };
-  const reconnectAdb = async () => {
-    begin(t("busyConnectAdb"));
-    try {
-      const next = await run("adb connect", () =>
-        mockMode
-          ? mockAdb()
-          : connectAdb().catch((e) => {
-              throw new StepError(
-                t("noAdbDeviceMode"),
-                e,
-              );
-            }),
-      );
-      attachAdb(next);
-      notify(t("connected", { serial: next.serial }));
     } catch (e) {
       showError(e);
     } finally {
@@ -873,12 +851,12 @@ function App() {
     }
   };
   const collect = async () => {
-    if (!adb) return;
     begin(t("busyCollect"));
     try {
+      const device = await ensureAdb();
       const request = await run(
         "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
-        () => pushAndCollect(adb, gate),
+        () => pushAndCollect(device, gate),
       );
       setBusy(t("busySubmit"));
       const result = await issueAuthorization(
@@ -897,13 +875,14 @@ function App() {
     }
   };
   const flashAuthorization = async () => {
-    if (!adb || !issued) return;
+    if (!issued) return;
     begin(t("busyFlashAuth"));
     try {
+      const device = await ensureAdb();
       await run(`adb sideload ${issued.name}`, () =>
         asSideload(() =>
           sendSideload(
-            adb,
+            device,
             issued.blob,
             (done, total) => setProgress({ label: t("progFlashAuth"), done, total }),
             issued.blob.size,
@@ -919,24 +898,25 @@ function App() {
       finish();
     }
   };
-  const reboot = async () => {
+  const reboot = async (device) => {
     try {
-      await run("adb reboot", () => adb.power.reboot());
+      await run("adb reboot", () => device.power.reboot());
     } catch (e) {
       logCommand(t("logError", { detail: e?.message || String(e) }));
     }
   };
   const flash = async () => {
-    if (!adb || (!rom && !romFile)) return;
+    if (!rom && !romFile) return;
     begin(romFile ? t("busyFlashLocalRom") : t("busyFlashRom"));
     try {
+      const device = await ensureAdb();
       if (romFile) {
         const started = performance.now();
         await run(`adb sideload ${romFile.name}`, () =>
           asSideload(() =>
             sendSideload(
-            adb,
-            romFile,
+              device,
+              romFile,
             (done, total) => {
               const elapsed = performance.now() - started - gate.pausedMs;
               setProgress({
@@ -951,7 +931,7 @@ function App() {
             ),
           ),
         );
-        await reboot();
+        await reboot(device);
         advance();
         notify(t("romFlashed"));
         return;
@@ -994,9 +974,9 @@ function App() {
         throw Error(t("romOffset"));
       };
       await run("adb sideload release parts", () =>
-        asSideload(() => sendSideload(adb, source, () => {}, total, gate)),
+        asSideload(() => sendSideload(device, source, () => {}, total, gate)),
       );
-      await reboot();
+      await reboot(device);
       advance();
       notify(t("romFlashed"));
     } catch (e) {
@@ -1027,12 +1007,6 @@ function App() {
     setLang(next);
     setLangState(next);
   };
-  const reconnectButton = (
-    <button type="button" className="secondary" onClick={reconnectAdb} disabled={!!busy}>
-      <span className="material-icons">usb</span>
-      {t("reconnectAdb")}
-    </button>
-  );
   const pauseButton = busy ? (
     <button type="button" className="secondary" onClick={togglePause}>
       <span className="material-icons">{paused ? "play_arrow" : "pause"}</span>
@@ -1232,14 +1206,9 @@ function App() {
             <p>{t("collectText")}</p>
             <Panel>
               <Actions
-                extra={
-                  <>
-                    {pauseButton}
-                    {reconnectButton}
-                  </>
-                }
+                extra={pauseButton}
                 onClick={collect}
-                disabled={!adb || !!busy}
+                disabled={!!busy}
               >
                 {busy || t("collectAction")}
               </Actions>
@@ -1252,14 +1221,9 @@ function App() {
             <p>{t("authFlashText")}</p>
             <Panel>
               <Actions
-                extra={
-                  <>
-                    {pauseButton}
-                    {reconnectButton}
-                  </>
-                }
+                extra={pauseButton}
                 onClick={flashAuthorization}
-                disabled={!adb || !issued || !!busy}
+                disabled={!issued || !!busy}
               >
                 {busy || t("authFlashAction")}
               </Actions>
@@ -1292,14 +1256,9 @@ function App() {
                 label={t("pickRom")}
               />
               <Actions
-                extra={
-                  <>
-                    {pauseButton}
-                    {reconnectButton}
-                  </>
-                }
+                extra={pauseButton}
                 onClick={flash}
-                disabled={(!rom && !romFile) || !adb || !!busy}
+                disabled={(!rom && !romFile) || !!busy}
               >
                 {busy ||
                   (romFile
