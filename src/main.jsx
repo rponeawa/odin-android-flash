@@ -41,6 +41,13 @@ const NAV = {
 };
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
+function adbMode(device) {
+  const state = device?.banner?.state;
+  if (state === "sideload") return "Recovery Sideload";
+  if (state === "recovery") return "Recovery ADB";
+  return "ADB";
+}
+
 function replyText(result) {
   if (typeof result === "string") return result.trim();
   if (typeof result?.text === "string") return result.text.trim();
@@ -567,6 +574,7 @@ function mockAdb() {
   return {
     mock: true,
     serial: "mock-device",
+    banner: { state: "recovery" },
     async sync() {
       return {
         async write({ file }) {
@@ -668,12 +676,21 @@ function App() {
     setBusy("");
     setProgress(null);
   };
+  const attachAdb = (next) => {
+    setAdb(next);
+    setDevice({
+      mode: adbMode(next),
+      name: next.serial || "",
+      serial: next.serial || "",
+    });
+  };
   const asSideload = async (action) => {
     setDevice((d) => (d ? { ...d, mode: "Recovery Sideload" } : d));
     try {
       return await action();
     } finally {
-      setDevice((d) => (d ? { ...d, mode: "Recovery ADB" } : d));
+      setAdb(null);
+      setDevice(null);
     }
   };
   const run = async (command, action) => {
@@ -826,12 +843,7 @@ function App() {
               );
             }),
       );
-      setAdb(device);
-      setDevice({
-        mode: "Recovery ADB",
-        name: device.serial || "",
-        serial: device.serial || "",
-      });
+      attachAdb(device);
       notify(t("connected", { serial: device.serial }));
     } catch (e) {
       showError(e);
@@ -852,12 +864,7 @@ function App() {
               );
             }),
       );
-      setAdb(next);
-      setDevice({
-        mode: "Recovery ADB",
-        name: next.serial || "",
-        serial: next.serial || "",
-      });
+      attachAdb(next);
       notify(t("connected", { serial: next.serial }));
     } catch (e) {
       showError(e);
@@ -912,6 +919,13 @@ function App() {
       finish();
     }
   };
+  const reboot = async () => {
+    try {
+      await run("adb reboot", () => adb.power.reboot());
+    } catch (e) {
+      logCommand(t("logError", { detail: e?.message || String(e) }));
+    }
+  };
   const flash = async () => {
     if (!adb || (!rom && !romFile)) return;
     begin(romFile ? t("busyFlashLocalRom") : t("busyFlashRom"));
@@ -937,7 +951,7 @@ function App() {
             ),
           ),
         );
-        await run("adb reboot", () => adb.power.reboot());
+        await reboot();
         advance();
         notify(t("romFlashed"));
         return;
@@ -982,7 +996,7 @@ function App() {
       await run("adb sideload release parts", () =>
         asSideload(() => sendSideload(adb, source, () => {}, total, gate)),
       );
-      await run("adb reboot", () => adb.power.reboot());
+      await reboot();
       advance();
       notify(t("romFlashed"));
     } catch (e) {

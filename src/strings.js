@@ -60,7 +60,7 @@ const ZH = {
   pickRom: "选择本地刷机包",
 
   doneTitle: "完成",
-  doneText: "刷机包已刷入，设备正在重启进入系统。",
+  doneText: "刷机包已刷入。设备没有自动重启时，在 TWRP 中选择重启。",
   home: "返回主页",
 
   busyConnectFastboot: "连接 fastboot",
@@ -93,7 +93,7 @@ const ZH = {
   connected: "已连接 {serial}",
   gotAuth: "已取得 {name}，请在 TWRP 中选择 高级 - ADB Sideload",
   authFlashed: "授权包已刷入",
-  romFlashed: "刷机包已刷入，设备正在重启",
+  romFlashed: "刷机包已刷入",
   logError: "错误 {detail}",
 
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
@@ -189,7 +189,7 @@ const EN = {
   pickRom: "Choose a local ROM",
 
   doneTitle: "Done",
-  doneText: "The ROM is flashed and the device is rebooting.",
+  doneText: "The ROM is flashed. If the device does not reboot on its own, reboot it from TWRP.",
   home: "Back to start",
 
   busyConnectFastboot: "Connecting fastboot",
@@ -222,7 +222,7 @@ const EN = {
   connected: "Connected {serial}",
   gotAuth: "Got {name}. In TWRP choose Advanced - ADB Sideload",
   authFlashed: "Authorization flashed",
-  romFlashed: "ROM flashed, the device is rebooting",
+  romFlashed: "ROM flashed",
   logError: "error {detail}",
 
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
