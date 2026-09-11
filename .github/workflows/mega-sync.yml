@@ -1,5 +1,5 @@
 name: Mega ROM watcher
-on:
+"on":
   workflow_dispatch:
   schedule:
     - cron: '17 */6 * * *'

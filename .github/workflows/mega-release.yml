@@ -1,5 +1,5 @@
 name: Sync Mega ROM releases
-on:
+"on":
   workflow_dispatch:
 permissions:
   contents: write
