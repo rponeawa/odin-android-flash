@@ -26,6 +26,19 @@ const RANGE = 8 * 1024 * 1024;
 const BLOCK = 262144;
 const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
+const FLOWS = {
+  full: ["connect", "base", "twrp", "collect", "auth", "rom", "done"],
+  update: ["connect", "twrp", "rom", "done"],
+};
+const NAV = {
+  connect: "navConnect",
+  base: "navBase",
+  twrp: "navTwrp",
+  collect: "navAuth",
+  auth: "navAuthFlash",
+  rom: "navRom",
+  done: "navDone",
+};
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
 function replyText(result) {
@@ -582,7 +595,8 @@ function mockAdb() {
 }
 
 function App() {
-  const [step, setStep] = useState(0),
+  const [mode, setMode] = useState(null),
+    [step, setStep] = useState(0),
     [releases, setReleases] = useState([]),
     [rom, setRom] = useState(null),
     [progress, setProgress] = useState(null),
@@ -740,7 +754,7 @@ function App() {
         serial: device.device?.serialNumber || "",
       });
       notify(t("connectedFastboot"));
-      setStep(1);
+      advance();
     } catch (e) {
       showError(e);
     } finally {
@@ -766,7 +780,7 @@ function App() {
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
       await runFlashScript(fastboot, files, steps, onFlash, run);
       notify(t("baseFlashed", { script: SCRIPT, count: steps.length }));
-      setStep(2);
+      advance();
     } catch (e) {
       showError(e);
     } finally {
@@ -775,7 +789,7 @@ function App() {
   };
   const skipBase = () => {
     notify(t("skippedBase"));
-    setStep(2);
+    advance();
   };
   const bootTwrp = async () => {
     if (!fastboot) return;
@@ -799,7 +813,7 @@ function App() {
         ),
       );
       notify(t("twrpBooted"));
-      setStep(3);
+      advance();
       setBusy(t("busyWaitAdb"));
       const device = await run("adb connect (TWRP)", () =>
         mockMode
@@ -867,7 +881,7 @@ function App() {
       );
       setIssued(result);
       notify(t("gotAuth", { name: result.name }));
-      setStep(4);
+      advance();
     } catch (e) {
       showError(e);
     } finally {
@@ -890,7 +904,7 @@ function App() {
         ),
       );
       notify(t("authFlashed"));
-      setStep(5);
+      advance();
     } catch (e) {
       showError(e);
     } finally {
@@ -923,7 +937,7 @@ function App() {
           ),
         );
         await run("adb reboot", () => adb.power.reboot());
-        setStep(6);
+        advance();
         notify(t("romFlashed"));
         return;
       }
@@ -968,7 +982,7 @@ function App() {
         asSideload(() => sendSideload(adb, source, () => {}, total, gate)),
       );
       await run("adb reboot", () => adb.power.reboot());
-      setStep(6);
+      advance();
       notify(t("romFlashed"));
     } catch (e) {
       showError(e);
@@ -976,7 +990,9 @@ function App() {
       finish();
     }
   };
+  const advance = () => setStep((current) => current + 1);
   const restart = () => {
+    setMode(null);
     gate.reset();
     setPaused(false);
     setDevice(null);
@@ -1008,15 +1024,8 @@ function App() {
       {paused ? t("resume") : t("pause")}
     </button>
   ) : null;
-  const titles = [
-    t("navConnect"),
-    t("navBase"),
-    t("navTwrp"),
-    t("navAuth"),
-    t("navAuthFlash"),
-    t("navRom"),
-    t("navDone"),
-  ];
+  const flow = FLOWS[mode] || [];
+  const view = flow[step];
   const fallback = { label: busy || t("waiting"), done: 0, total: 1 };
   const dark = theme ? theme === "dark" : systemDark;
   return (
@@ -1064,12 +1073,48 @@ function App() {
         </div>
       </header>
       <main>
-        <nav>
-          {titles.map((x, i) => (
-            <i className={i <= step ? "on" : ""} key={x} />
-          ))}
-        </nav>
-        {step === 0 && (
+        {!mode && (
+          <Page title={t("welcomeTitle")} icon="rocket_launch">
+            <div className="choices">
+              <button
+                type="button"
+                className="choice"
+                onClick={() => {
+                  setMode("full");
+                  setStep(0);
+                }}
+              >
+                <span className="material-icons">restart_alt</span>
+                <span className="choice-text">
+                  <strong>{t("modeFirst")}</strong>
+                  <span>{t("modeFirstText")}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="choice"
+                onClick={() => {
+                  setMode("update");
+                  setStep(0);
+                }}
+              >
+                <span className="material-icons">system_update_alt</span>
+                <span className="choice-text">
+                  <strong>{t("modeUpdate")}</strong>
+                  <span>{t("modeUpdateText")}</span>
+                </span>
+              </button>
+            </div>
+          </Page>
+        )}
+        {mode && (
+          <nav>
+            {flow.map((key, i) => (
+              <i className={i <= step ? "on" : ""} key={key} title={t(NAV[key])} />
+            ))}
+          </nav>
+        )}
+        {view === "connect" && (
           <Page title={t("connectTitle")} icon="usb">
             <p>{t("connectText")}</p>
             <Panel>
@@ -1088,7 +1133,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 1 && (
+        {view === "base" && (
           <Page title={t("baseTitle")} icon="download">
             <p>{t("baseText")}</p>
             <div className="warning">{t("baseWarning")}</div>
@@ -1123,7 +1168,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 2 && (
+        {view === "twrp" && (
           <Page title={t("twrpTitle")} icon="memory">
             <Panel>
               <FilePick
@@ -1143,7 +1188,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 3 && (
+        {view === "collect" && (
           <Page title={t("collectTitle")} icon="vpn_key">
             <p>{t("collectText")}</p>
             <Panel>
@@ -1163,7 +1208,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 4 && (
+        {view === "auth" && (
           <Page title={t("authFlashTitle")} icon="verified_user">
             <p>{t("authFlashText")}</p>
             <Panel>
@@ -1183,7 +1228,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 5 && (
+        {view === "rom" && (
           <Page title={t("romTitle")} icon="inventory_2">
             <p>{t("romText")}</p>
             <Panel>
@@ -1221,7 +1266,7 @@ function App() {
             </Panel>
           </Page>
         )}
-        {step === 6 && (
+        {view === "done" && (
           <Page title={t("doneTitle")} icon="check_circle">
             <p>{t("doneText")}</p>
             <Panel>
@@ -1237,28 +1282,6 @@ function App() {
               : t("logEmpty")}
           </pre>
         </section>
-        <div className="step-nav">
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setStep((current) => Math.max(0, current - 1))}
-            disabled={step === 0 || !!busy}
-          >
-            <span className="material-icons">arrow_back</span>
-            {t("prev")}
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() =>
-              setStep((current) => Math.min(titles.length - 1, current + 1))
-            }
-            disabled={step === titles.length - 1 || !!busy}
-          >
-            {t("next")}
-            <span className="material-icons">arrow_forward</span>
-          </button>
-        </div>
       </main>
     </>
   );

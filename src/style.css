@@ -139,8 +139,9 @@ button.icon {
 button.icon:hover { background: var(--hover); }
 button.icon:disabled { background: none; }
 button.icon .material-icons { font-size: 20px; }
-.actions { display: flex; justify-content: flex-start; gap: 12px; width: 100%; margin-top: 24px; }
-.panel > .actions:first-child { margin-top: 0; }
+.actions { display: flex; justify-content: flex-start; gap: 12px; width: 100%; }
+.panel > * + * { margin-top: 18px; }
+.panel > * + .actions { margin-top: 24px; }
 .warning {
   padding: 12px 16px;
   background: var(--warn-bg);
@@ -148,7 +149,7 @@ button.icon .material-icons { font-size: 20px; }
   color: var(--warn-text);
   animation: fade-in 180ms ease-out both;
 }
-.progress { width: 100%; margin-top: 18px; color: var(--muted); }
+.progress { width: 100%; color: var(--muted); }
 .progress-track { width: 100%; height: 12px; margin-top: 8px; overflow: hidden; background: var(--track); }
 .progress-fill { height: 100%; background: var(--accent); transition: width 120ms linear; }
 .progress-track.indeterminate .progress-fill { animation: progress-slide 1.2s ease-in-out infinite alternate; }
@@ -178,7 +179,6 @@ a { color: var(--accent); }
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin-top: 18px;
   color: var(--muted);
 }
 .mode-choice input { width: auto; accent-color: var(--accent); }
@@ -188,14 +188,12 @@ a { color: var(--accent); }
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin-top: 18px;
   padding: 10px 12px;
   border: 1px dashed var(--line);
   border-radius: 10px;
   color: var(--muted);
   cursor: pointer;
 }
-.panel > .file-pick:first-child { margin-top: 0; }
 .file-pick .material-icons { font-size: 20px; color: var(--accent); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-pick input { display: none; }
@@ -207,13 +205,13 @@ a { color: var(--accent); }
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   color: var(--text);
   font-weight: 400;
 }
-.select-value .material-icons { color: var(--muted); transition: transform 160ms ease; }
+.select-value .material-icons { font-size: 20px; color: var(--muted); transition: transform 160ms ease; }
 .select.open .select-value .material-icons { transform: rotate(180deg); }
 .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-list {
@@ -274,3 +272,22 @@ main > section { animation: fade-in 180ms ease-out both; }
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
+
+.choices { display: flex; flex-direction: column; gap: 16px; margin-top: 28px; }
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--text);
+  text-align: left;
+  animation: fade-in 180ms ease-out both;
+}
+.choice:hover { background: var(--hover); }
+.choice .material-icons { font-size: 28px; color: var(--accent); }
+.choice-text { display: flex; flex-direction: column; gap: 4px; }
+.choice-text strong { font-size: 16px; font-weight: 500; }
+.choice-text span { color: var(--muted); font-size: 14px; font-weight: 400; }
