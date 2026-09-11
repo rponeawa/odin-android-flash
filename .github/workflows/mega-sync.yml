@@ -33,11 +33,15 @@ jobs:
           RANGE_START: ${{ matrix.start }}
           RANGE_END: ${{ matrix.end }}
           OUTPUT: range-${{ matrix.id }}.bin
-        run: node scripts/mega-range.mjs
+        run: |
+          node scripts/mega-range.mjs | tee mega.log
+          sed -n 's/.*\"name\":\"\([^\"]*\\)\".*/\1/p' mega.log | head -1 > rom-name.txt
       - uses: actions/upload-artifact@v4
         with:
           name: mega-sync-${{ matrix.id }}
-          path: range-${{ matrix.id }}.bin
+          path: |
+            range-${{ matrix.id }}.bin
+            rom-name.txt
           compression-level: 0
           retention-days: 2
   publish:
@@ -51,7 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="rom-$(date -u +%Y%m%d%H%M%S)"
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "刷机包 $tag" --notes '由 Mega watcher 自动同步。分卷按文件名顺序拼接。'
+          title=$(cat ranges/mega-sync-a/rom-name.txt)
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes '由 Mega watcher 自动同步。分卷按文件名顺序拼接。'
           for side in a b; do
             split -b 1900m -d -a 3 "ranges/mega-sync-$side/range-$side.bin" "odin-rom.zip.part-$side-"
             for f in odin-rom.zip.part-$side-*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"; done

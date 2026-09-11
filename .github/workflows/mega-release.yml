@@ -13,7 +13,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release view rom-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create rom-latest --repo "$GITHUB_REPOSITORY" --title '最新刷机包' --notes '由 Mega 同步。分卷按文件名顺序拼接。'
+          gh release view rom-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create rom-latest --repo "$GITHUB_REPOSITORY" --title 'odin-Android17-HyperOS4.0.0.35-秋城落叶-20260907_0203-Release.zip' --notes '由 Mega 同步。分卷按文件名顺序拼接。'
       - name: Locate completed Mega artifacts
         id: find
         env:
