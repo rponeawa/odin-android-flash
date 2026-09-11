@@ -16,11 +16,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | [.id,.name,.created_at] | @tsv' | sort -k2,2 -k3,3r | awk '$2=="mega-sync-a"&&!a++{print "a=" $1} $2=="mega-sync-b"&&!b++{print "b=" $1}' >> "$GITHUB_OUTPUT"
-          grep -q '^a=' "$GITHUB_OUTPUT"
-          grep -q '^b=' "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | [.id,.name,.created_at] | @tsv' | sort -k2,2 -k3,3r | awk '$2=="mega-sync-a"&&!a++{print "a=" $1} $2=="mega-sync-b"&&!b++{print "b=" $1}' > ids.txt
+          cat ids.txt >> "$GITHUB_OUTPUT"
+          if grep -q '^a=' ids.txt && grep -q '^b=' ids.txt; then
+            echo "found=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "两侧 range artifact 尚未齐备，本轮无事可做"
+            echo "found=no" >> "$GITHUB_OUTPUT"
+          fi
       - name: Read range metadata
         id: meta
+        if: steps.ids.outputs.found == 'yes'
         env:
           GH_TOKEN: ${{ github.token }}
           A_ID: ${{ steps.ids.outputs.a }}
@@ -40,6 +46,7 @@ jobs:
           echo "size=$size_a" >> "$GITHUB_OUTPUT"
       - name: Skip when the ROM is already released
         id: gate
+        if: steps.ids.outputs.found == 'yes'
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: ${{ steps.meta.outputs.title }}
