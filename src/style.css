@@ -188,17 +188,30 @@ a { color: var(--accent); }
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 6px 8px 6px 12px;
   border: 1px dashed var(--line);
   border-radius: 10px;
   color: var(--muted);
+}
+.file-pick-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
   cursor: pointer;
 }
 .file-pick .material-icons { font-size: 20px; color: var(--accent); }
+.file-pick .icon .material-icons { color: var(--muted); font-size: 18px; }
+.file-pick .icon { padding: 6px; }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-pick input { display: none; }
 
-.select { position: relative; width: 100%; }
+.select-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.select-row .icon { padding: 6px; }
+.select-row .icon .material-icons { font-size: 18px; }
+.select { position: relative; flex: 1; min-width: 0; }
 .select-value {
   display: flex;
   align-items: center;

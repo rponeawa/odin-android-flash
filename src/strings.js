@@ -8,6 +8,7 @@ const ZH = {
   leaveText: "当前进度会丢失。",
   leaveConfirm: "返回",
   cancel: "取消",
+  clear: "取消选择",
   modeFirst: "初次刷入",
   modeFirstText: "从官方底包开始，包含授权",
   modeUpdate: "更新",
@@ -18,6 +19,10 @@ const ZH = {
   skip: "跳过",
   mockMode: "Mock 模式",
   waiting: "等待操作",
+  actionDownloadFlash: "下载并刷入",
+  actionFlashSelected: "刷入选中",
+  actionDownloadBoot: "下载并启动",
+  actionBootSelected: "启动选中",
   language: "English",
   theme: "深色模式",
 
@@ -37,12 +42,9 @@ const ZH = {
   baseText: "设备已在官方固件时可以跳过这一步。",
   baseWarning: "此操作会清除手机上的全部数据。",
   pickBase: "选择本地底包",
-  flashBaseAction: "下载并刷入官方底包",
-  flashBaseLocal: "刷入本地底包",
 
   twrpTitle: "临时启动 TWRP",
   pickTwrp: "选择本地 TWRP 镜像",
-  bootTwrpAction: "自动启动 TWRP",
 
   collectTitle: "采集并提交授权",
   collectText: "请让 TWRP 停留在主界面。",
@@ -56,8 +58,6 @@ const ZH = {
   romText: "先在 TWRP 中选择 高级 - ADB Sideload 并滑动确认。",
   selectVersion: "选择版本",
   pickRom: "选择本地刷机包",
-  romAction: "下载并自动刷入",
-  romLocal: "刷入本地刷机包",
 
   doneTitle: "完成",
   doneText: "刷机包已刷入，设备正在重启进入系统。",
@@ -137,6 +137,7 @@ const EN = {
   leaveText: "The current progress is lost.",
   leaveConfirm: "Return",
   cancel: "Cancel",
+  clear: "Clear",
   modeFirst: "First flash",
   modeFirstText: "Starts from official firmware and includes authorization",
   modeUpdate: "Update",
@@ -147,6 +148,10 @@ const EN = {
   skip: "Skip",
   mockMode: "Mock mode",
   waiting: "Idle",
+  actionDownloadFlash: "Download and flash",
+  actionFlashSelected: "Flash selected",
+  actionDownloadBoot: "Download and boot",
+  actionBootSelected: "Boot selected",
   language: "中文",
   theme: "Dark mode",
 
@@ -166,12 +171,9 @@ const EN = {
   baseText: "Skip this step if the device already runs official firmware.",
   baseWarning: "This erases all data on the phone.",
   pickBase: "Choose a local firmware package",
-  flashBaseAction: "Download and flash firmware",
-  flashBaseLocal: "Flash local firmware",
 
   twrpTitle: "Boot TWRP",
   pickTwrp: "Choose a local TWRP image",
-  bootTwrpAction: "Boot TWRP",
 
   collectTitle: "Collect and submit",
   collectText: "Leave TWRP on its main screen.",
@@ -185,8 +187,6 @@ const EN = {
   romText: "In TWRP choose Advanced - ADB Sideload and swipe to confirm.",
   selectVersion: "Select a version",
   pickRom: "Choose a local ROM",
-  romAction: "Download and flash",
-  romLocal: "Flash local ROM",
 
   doneTitle: "Done",
   doneText: "The ROM is flashed and the device is rebooting.",

@@ -1159,6 +1159,7 @@ function App() {
                 accept=".tgz,.gz,application/gzip"
                 file={baseFile}
                 onPick={setBaseFile}
+                disabled={!!busy}
                 label={t("pickBase")}
               />
               <Actions
@@ -1179,7 +1180,10 @@ function App() {
                 onClick={flashBase}
                 disabled={!fastboot || !!busy}
               >
-                {busy || (baseFile ? t("flashBaseLocal") : t("flashBaseAction"))}
+                {busy ||
+                  (baseFile
+                    ? t("actionFlashSelected")
+                    : t("actionDownloadFlash"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1192,6 +1196,7 @@ function App() {
                 accept=".img"
                 file={twrpFile}
                 onPick={setTwrpFile}
+                disabled={!!busy}
                 label={t("pickTwrp")}
               />
               <Actions
@@ -1199,7 +1204,10 @@ function App() {
                 onClick={bootTwrp}
                 disabled={!fastboot || !!busy}
               >
-                {busy || t("bootTwrpAction")}
+                {busy ||
+                  (twrpFile
+                    ? t("actionBootSelected")
+                    : t("actionDownloadBoot"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1260,11 +1268,13 @@ function App() {
                 onChange={(value) =>
                   setRom(releases.find((x) => String(x.id) === value))
                 }
+                onClear={() => setRom(null)}
               />
               <FilePick
                 accept=".zip"
                 file={romFile}
                 onPick={setRomFile}
+                disabled={!!busy}
                 label={t("pickRom")}
               />
               <Actions
@@ -1277,7 +1287,10 @@ function App() {
                 onClick={flash}
                 disabled={(!rom && !romFile) || !adb || !!busy}
               >
-                {busy || (romFile ? t("romLocal") : t("romAction"))}
+                {busy ||
+                  (romFile
+                    ? t("actionFlashSelected")
+                    : t("actionDownloadFlash"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1347,17 +1360,37 @@ function Page({ title, icon, children }) {
 function Panel({ children }) {
   return <div className="panel">{children}</div>;
 }
-function FilePick({ accept, file, onPick, label }) {
+function FilePick({ accept, file, onPick, label, disabled }) {
   return (
-    <label className="file-pick">
-      <span className="material-icons">{file ? "description" : "folder_open"}</span>
-      <span className="file-name">{file ? file.name : label}</span>
-      <input
-        type="file"
-        accept={accept}
-        onChange={(event) => onPick(event.target.files?.[0] || null)}
-      />
-    </label>
+    <div className="file-pick">
+      <label className="file-pick-main">
+        <span className="material-icons">
+          {file ? "description" : "folder_open"}
+        </span>
+        <span className="file-name">{file ? file.name : label}</span>
+        <input
+          type="file"
+          accept={accept}
+          disabled={disabled}
+          onChange={(event) => {
+            onPick(event.target.files?.[0] || null);
+            event.target.value = "";
+          }}
+        />
+      </label>
+      {file && (
+        <button
+          type="button"
+          className="icon"
+          onClick={() => onPick(null)}
+          title={t("clear")}
+          aria-label={t("clear")}
+          disabled={disabled}
+        >
+          <span className="material-icons">close</span>
+        </button>
+      )}
+    </div>
   );
 }
 function Confirm({ title, text, confirmLabel, cancelLabel, onConfirm, onCancel }) {
@@ -1403,7 +1436,7 @@ function Confirm({ title, text, confirmLabel, cancelLabel, onConfirm, onCancel }
     </div>
   );
 }
-function Select({ value, options, placeholder, onChange, disabled }) {
+function Select({ value, options, placeholder, onChange, onClear, disabled }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
   useEffect(() => {
@@ -1416,7 +1449,8 @@ function Select({ value, options, placeholder, onChange, disabled }) {
   }, [open]);
   const chosen = options.find((option) => option.value === value);
   return (
-    <div className={`select${open ? " open" : ""}`} ref={box}>
+    <div className="select-row">
+      <div className={`select${open ? " open" : ""}`} ref={box}>
       <button
         type="button"
         className="select-value"
@@ -1440,8 +1474,21 @@ function Select({ value, options, placeholder, onChange, disabled }) {
             >
               {option.label}
             </button>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {chosen && onClear && (
+        <button
+          type="button"
+          className="icon"
+          onClick={onClear}
+          title={t("clear")}
+          aria-label={t("clear")}
+          disabled={disabled}
+        >
+          <span className="material-icons">close</span>
+        </button>
       )}
     </div>
   );
