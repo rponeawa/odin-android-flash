@@ -13,13 +13,17 @@ jobs:
     steps:
       - name: Find latest range artifacts
         id: ids
-        env: {GH_TOKEN: ${{ github.token }}}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | [.id,.name,.created_at] | @tsv' | sort -k2,2 -k3,3r | awk '$2=="mega-sync-a"&&!a++{print "a=" $1} $2=="mega-sync-b"&&!b++{print "b=" $1}' >> "$GITHUB_OUTPUT"
           test -s "$GITHUB_OUTPUT"
       - name: Download ranges and publish
-        env: {GH_TOKEN: ${{ github.token }}, A_ID: ${{ steps.ids.outputs.a }}, B_ID: ${{ steps.ids.outputs.b }}}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          A_ID: ${{ steps.ids.outputs.a }}
+          B_ID: ${{ steps.ids.outputs.b }}
         run: |
           set -euo pipefail
           mkdir -p ranges
