@@ -1,6 +1,30 @@
 {
-  "name": "odin-android-flash", "version": "0.2.0", "private": true, "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build", "test": "tsx --test tests/*.test.ts", "sync:mega": "node scripts/sync-mega.mjs" },
-  "dependencies": { "@yume-chan/adb": "2.6.4", "@yume-chan/adb-daemon-webusb": "2.3.2", "@yume-chan/adb-credential-web": "2.1.0", "@yume-chan/stream-extra": "2.6.1", "hash-wasm": "4.12.0" },
-  "devDependencies": { "@types/w3c-web-usb": "1.0.10", "@types/node": "^22.0.0", "typescript": "^5.9.0", "vite": "^7.0.0", "tsx": "^4.20.0", "megajs": "1.3.10" }
+  "name": "odin-android-flash",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "tsx --test tests/*.test.ts",
+    "sync:mega": "node scripts/sync-mega.mjs"
+  },
+  "dependencies": {
+    "@yume-chan/adb": "2.6.4",
+    "@yume-chan/adb-credential-web": "2.1.0",
+    "@yume-chan/adb-daemon-webusb": "2.3.2",
+    "@yume-chan/stream-extra": "2.6.1",
+    "hash-wasm": "4.12.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/w3c-web-usb": "1.0.10",
+    "@vitejs/plugin-react": "^5.0.4",
+    "megajs": "1.3.10",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
 }
