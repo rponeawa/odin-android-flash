@@ -47,16 +47,33 @@ function adbMode(device) {
   return "ADB";
 }
 
+function logLine(item) {
+  const head = `${item.time}  ${item.mock ? "[mock] " : ""}`;
+  if (item.error)
+    return (
+      head +
+      t("logError", {
+        detail: item.error.detail || item.error.message || String(item.error),
+      })
+    );
+  return head + item.command + (item.reply ? `  ${item.reply}` : "");
+}
+
 function replyText(result) {
   if (typeof result === "string") return result.trim();
   if (typeof result?.text === "string") return result.text.trim();
   return "";
 }
 
-class StepError extends Error {
-  constructor(hint, cause) {
-    super(hint);
-    this.detail = cause?.message || String(cause);
+class AppError extends Error {
+  constructor(key, vars, cause) {
+    super();
+    this.key = key;
+    this.vars = vars;
+    if (cause) this.detail = cause.message || String(cause);
+  }
+  get message() {
+    return t(this.key, this.vars);
   }
 }
 
@@ -104,7 +121,7 @@ const text = (bytes) =>
 
 async function connectAdb() {
   if (!navigator.usb)
-    throw Error(t("noWebUsb"));
+    throw new AppError("noWebUsb");
   const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
   const device = await manager.requestDevice();
   const connection = await device.connect();
@@ -131,7 +148,7 @@ async function pushAndCollect(adb, gate) {
     "/tmp/qlp_collect qlp_flash",
   ]);
   const out = await new Response(p.output).blob();
-  if (!out.size) throw Error(t("collectEmpty"));
+  if (!out.size) throw new AppError("collectEmpty");
   return out;
 }
 
@@ -148,7 +165,7 @@ async function downloadBlob(url, onProgress, gate) {
     return new Blob(parts);
   }
   const response = await fetch(proxied(url));
-  if (!response.ok) throw Error(t("downloadFailed", { status: response.status }));
+  if (!response.ok) throw new AppError("downloadFailed", { status: response.status });
   if (!response.body) return response.blob();
   const reader = response.body.getReader();
   const chunks = [];
@@ -169,7 +186,7 @@ async function downloadBlob(url, onProgress, gate) {
 async function probeSize(url) {
   const response = await fetch(proxied(url), { headers: { Range: "bytes=0-0" } });
   if (!response.ok && response.status !== 206)
-    throw Error(t("sizeFailed", { status: response.status }));
+    throw new AppError("sizeFailed", { status: response.status });
   await response.body?.cancel();
   const range = response.headers.get("content-range");
   const ranged = response.status === 206 && !!range;
@@ -200,9 +217,9 @@ function rangedStream(url, total, onProgress, gate) {
             signal: ctl.signal,
           });
           if (!response.ok && response.status !== 206)
-            throw Error(t("downloadFailed", { status: response.status }));
+            throw new AppError("downloadFailed", { status: response.status });
           if (response.status === 200 && total > RANGE)
-            throw Error(t("rangeIgnored"));
+            throw new AppError("rangeIgnored");
           chunk = new Uint8Array(await response.arrayBuffer());
         } catch (e) {
           if (retry === 2) throw e;
@@ -313,7 +330,7 @@ async function extractTarStream(stream, onEntry) {
     const sink = kind === "x" || kind === "g" ? null : await onEntry(name, size);
     let left = size;
     while (left > 0) {
-      if (!(await src.fill(1))) throw Error(t("baseTruncated", { name }));
+      if (!(await src.fill(1))) throw new AppError("baseTruncated", { name });
       const chunk = src.take(Math.min(left, src.size));
       sink?.write(chunk);
       left -= chunk.length;
@@ -330,8 +347,8 @@ async function extractTarStream(stream, onEntry) {
 async function basePackageStream(source, onProgress, gate) {
   if (source instanceof Blob) return blobStream(source, onProgress, gate);
   const { total, ranged } = await probeSize(source);
-  if (!total) throw Error(t("baseSizeFailed"));
-  if (!ranged) throw Error(t("baseNoRange"));
+  if (!total) throw new AppError("baseSizeFailed");
+  if (!ranged) throw new AppError("baseNoRange");
   return rangedStream(source, total, onProgress, gate);
 }
 
@@ -412,7 +429,7 @@ async function runFlashScript(fastboot, resolve, steps, onFlash, run) {
     const label = `${index}/${steps.length}`;
     if (step.verb === "flash") {
       const image = resolve(step.file);
-      if (!image) throw Error(t("baseMissingFile", { file: step.file }));
+      if (!image) throw new AppError("baseMissingFile", { file: step.file });
       await run(`fastboot flash ${step.partition} ${step.file}`, () =>
         fastboot.flashBlob(step.partition, image, (p) =>
           onFlash(t("progFlash", { partition: step.partition, index: label }), p),
@@ -445,17 +462,17 @@ async function issueAuthorization(request, onProgress, gate) {
       if (event.lengthComputable)
         onProgress?.(t("progUploadRequest"), event.loaded, event.total);
     };
-    xhr.onerror = () => reject(Error(t("authNetwork")));
-    xhr.ontimeout = () => reject(Error(t("authTimeout")));
+    xhr.onerror = () => reject(new AppError("authNetwork"));
+    xhr.ontimeout = () => reject(new AppError("authTimeout"));
     xhr.timeout = 120000;
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(Error(t("authHttp", { status: xhr.status })));
+        reject(new AppError("authHttp", { status: xhr.status }));
         return;
       }
       const data = xhr.response;
       if (!data?.ok || !data.download) {
-        reject(Error(data?.error || t("authNoPackage")));
+        reject(data?.error ? Error(data.error) : new AppError("authNoPackage"));
         return;
       }
       resolve(data);
@@ -475,10 +492,7 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   try {
     socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
   } catch (e) {
-    throw new StepError(
-      t("notSideload"),
-      e,
-    );
+    throw new AppError("notSideload", undefined, e);
   }
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
@@ -487,7 +501,7 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   const readExact = async (n) => {
     while (pending.length < n) {
       const x = await reader.read();
-      if (x.done) throw Error(t("sideloadClosed"));
+      if (x.done) throw new AppError("sideloadClosed");
       const z = new Uint8Array(pending.length + x.value.length);
       z.set(pending);
       z.set(x.value, pending.length);
@@ -509,12 +523,12 @@ async function sendSideload(adb, source, onProgress, total, gate) {
     await gate?.wait();
     const cmd = new TextDecoder().decode(await readExact(8));
     if (cmd === "DONEDONE") break;
-    if (cmd === "FAILFAIL") throw Error(t("sideloadReject"));
+    if (cmd === "FAILFAIL") throw new AppError("sideloadReject");
     const block = Number(cmd);
-    if (!Number.isInteger(block)) throw Error(t("sideloadBadBlock", { cmd }));
+    if (!Number.isInteger(block)) throw new AppError("sideloadBadBlock", { cmd });
     const offset = block * BLOCK;
     const len = Math.min(BLOCK, total - offset);
-    if (len <= 0) throw Error(t("sideloadRange"));
+    if (len <= 0) throw new AppError("sideloadRange");
     const data = await get(offset, len);
     await writer.write(data);
     sent = Math.max(sent, offset + data.length);
@@ -639,29 +653,25 @@ function App() {
   const notify = (text, tone = "info") =>
     setToast({ text, tone, id: (toastId.current += 1) });
   const showError = (error) => {
-    const detail = error?.detail || error?.message || String(error);
-    logCommand(t("logError", { detail }));
-    notify(error?.message || detail, "error");
+    logFailure(error);
+    notify(error?.message || error?.detail || String(error), "error");
   };
   const dismissToast = useCallback(() => setToast(null), []);
   const logRef = useRef(null);
   const logId = useRef(0);
-  const logCommand = (command) => {
+  const appendLog = (entry) => {
     const id = (logId.current += 1);
     setCommandLog((items) => [
       ...items.slice(-39),
-      {
-        id,
-        text: `${new Date().toLocaleTimeString()}  ${mockMode ? "[mock] " : ""}${command}`,
-      },
+      { id, time: new Date().toLocaleTimeString(), mock: mockMode, ...entry },
     ]);
     return id;
   };
+  const logCommand = (command) => appendLog({ command });
+  const logFailure = (error) => appendLog({ error });
   const settleCommand = (id, reply) =>
     setCommandLog((items) =>
-      items.map((item) =>
-        item.id === id ? { ...item, text: `${item.text}  ${reply}` } : item,
-      ),
+      items.map((item) => (item.id === id ? { ...item, reply } : item)),
     );
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -696,7 +706,7 @@ function App() {
       mockMode
         ? mockAdb()
         : connectAdb().catch((e) => {
-            throw new StepError(t("noAdbDeviceMode"), e);
+            throw new AppError("noAdbDeviceMode", undefined, e);
           }),
     );
     attachAdb(next);
@@ -757,7 +767,7 @@ function App() {
   useEffect(() => {
     fetch(REPO)
       .then((r) => {
-        if (!r.ok) throw Error(t("releasesFailed", { status: r.status }));
+        if (!r.ok) throw new AppError("releasesFailed", { status: r.status });
         return r.json();
       })
       .then((xs) =>
@@ -777,10 +787,7 @@ function App() {
       const device = mockMode ? mockFastboot() : new FastbootDevice();
       await run("fastboot usb connect", () =>
         device.connect().catch((e) => {
-          throw new StepError(
-            t("noFastbootDevice"),
-            e,
-          );
+          throw new AppError("noFastbootDevice", undefined, e);
         }),
       );
       const product = await run("fastboot getvar product", () =>
@@ -811,10 +818,10 @@ function App() {
         gate,
       );
       const root = packageRoot(files);
-      if (root === null) throw Error(t("baseNoScript", { script: SCRIPT }));
+      if (root === null) throw new AppError("baseNoScript", { script: SCRIPT });
       const resolve = (file) => files.get(root + file);
       const steps = parseFlashScript(await resolve(SCRIPT).text());
-      if (!steps.length) throw Error(t("baseNoCommands", { script: SCRIPT }));
+      if (!steps.length) throw new AppError("baseNoCommands", { script: SCRIPT });
       setBusy(t("busyFlashBase"));
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
@@ -912,7 +919,7 @@ function App() {
     try {
       await run("adb reboot", () => device.power.reboot());
     } catch (e) {
-      logCommand(t("logError", { detail: e?.message || String(e) }));
+      logFailure(e);
     }
   };
   const flash = async () => {
@@ -971,16 +978,16 @@ function App() {
             }
             base += size;
           }
-          if (!part) throw Error(t("romOffset"));
+          if (!part) throw new AppError("romOffset");
           const take = Math.min(len - filled, Number(part.size || 0) - local);
           const r = await fetch(proxied(part.browser_download_url), {
             headers: { Range: `bytes=${local}-${local + take - 1}` },
           });
           if (!r.ok && r.status !== 206)
-            throw Error(t("partDownloadFailed", { status: r.status }));
+            throw new AppError("partDownloadFailed", { status: r.status });
           const data = new Uint8Array(await r.arrayBuffer());
           if (!data.length)
-            throw Error(t("partDownloadFailed", { status: r.status }));
+            throw new AppError("partDownloadFailed", { status: r.status });
           out.set(data, filled);
           filled += data.length;
         }
@@ -1303,7 +1310,7 @@ function App() {
             <h2>{t("log")}</h2>
             <pre ref={logRef}>
               {commandLog.length
-                ? commandLog.map((item) => item.text).join("\n")
+                ? commandLog.map(logLine).join("\n")
                 : t("logEmpty")}
             </pre>
           </section>
