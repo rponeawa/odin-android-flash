@@ -197,6 +197,58 @@ async function probeSize(url) {
   return { total, ranged };
 }
 
+async function fetchRange(url, from, to) {
+  const wanted = to - from + 1;
+  for (let retry = 0; ; retry += 1) {
+    const ctl = new AbortController();
+    let timer;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => ctl.abort(), STALL);
+    };
+    try {
+      arm();
+      const response = await fetch(proxied(url), {
+        headers: { Range: `bytes=${from}-${to}` },
+        signal: ctl.signal,
+      });
+      if (!response.ok && response.status !== 206)
+        throw new AppError("downloadFailed", { status: response.status });
+      if (
+        response.status === 200 &&
+        Number(response.headers.get("content-length")) > wanted
+      )
+        throw new AppError("rangeIgnored");
+      if (!response.body) return new Uint8Array(await response.arrayBuffer());
+      const reader = response.body.getReader();
+      const parts = [];
+      let size = 0;
+      while (true) {
+        arm();
+        const part = await reader.read();
+        if (part.done) break;
+        parts.push(part.value);
+        size += part.value.length;
+      }
+      if (!size) throw new AppError("downloadFailed", { status: response.status });
+      const joined = new Uint8Array(size);
+      let at = 0;
+      for (const part of parts) {
+        joined.set(part, at);
+        at += part.length;
+      }
+      return joined;
+    } catch (e) {
+      const failure = ctl.signal.aborted
+        ? new AppError("stalled", { seconds: STALL / 1000 })
+        : e;
+      if (retry === 2) throw failure;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function rangedStream(url, total, onProgress, gate) {
   let start = 0;
   const started = performance.now();
@@ -208,56 +260,9 @@ function rangedStream(url, total, onProgress, gate) {
         return;
       }
       const end = Math.min(total - 1, start + RANGE - 1);
-      let chunk = null;
-      for (let retry = 0; retry < 3 && !chunk; retry += 1) {
-        const ctl = new AbortController();
-        let timer;
-        const arm = () => {
-          clearTimeout(timer);
-          timer = setTimeout(() => ctl.abort(), STALL);
-        };
-        try {
-          arm();
-          const response = await fetch(proxied(url), {
-            headers: { Range: `bytes=${start}-${end}` },
-            signal: ctl.signal,
-          });
-          if (!response.ok && response.status !== 206)
-            throw new AppError("downloadFailed", { status: response.status });
-          if (response.status === 200 && total > RANGE)
-            throw new AppError("rangeIgnored");
-          if (!response.body) {
-            chunk = new Uint8Array(await response.arrayBuffer());
-            break;
-          }
-          const reader = response.body.getReader();
-          const parts = [];
-          let size = 0;
-          while (true) {
-            arm();
-            const part = await reader.read();
-            if (part.done) break;
-            parts.push(part.value);
-            size += part.value.length;
-          }
-          const joined = new Uint8Array(size);
-          let at = 0;
-          for (const part of parts) {
-            joined.set(part, at);
-            at += part.length;
-          }
-          chunk = joined;
-        } catch (e) {
-          const failure = ctl.signal.aborted
-            ? new AppError("stalled", { seconds: STALL / 1000 })
-            : e;
-          if (retry === 2) throw failure;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
+      const chunk = await fetchRange(url, start, end);
       controller.enqueue(chunk);
-      start = end + 1;
+      start += chunk.length;
       const elapsed = performance.now() - started - (gate?.pausedMs || 0);
       onProgress?.(start, total, start / Math.max(0.001, elapsed / 1000));
     },
@@ -1013,14 +1018,11 @@ function App() {
           }
           if (!part) throw new AppError("romOffset");
           const take = Math.min(len - filled, Number(part.size || 0) - local);
-          const r = await fetch(proxied(part.browser_download_url), {
-            headers: { Range: `bytes=${local}-${local + take - 1}` },
-          });
-          if (!r.ok && r.status !== 206)
-            throw new AppError("partDownloadFailed", { status: r.status });
-          const data = new Uint8Array(await r.arrayBuffer());
-          if (!data.length)
-            throw new AppError("partDownloadFailed", { status: r.status });
+          const data = await fetchRange(
+            part.browser_download_url,
+            local,
+            local + take - 1,
+          );
           out.set(data, filled);
           filled += data.length;
         }
