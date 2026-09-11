@@ -7,6 +7,7 @@ permissions:
   contents: write
 jobs:
   sync:
+    timeout-minutes: 360
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
