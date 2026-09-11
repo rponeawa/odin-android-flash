@@ -1,25 +1,14 @@
 name: Mega ROM watcher
-"on":
-  workflow_dispatch:
+on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 */12 * * *'
+  workflow_dispatch:
 permissions:
   contents: write
-concurrency:
-  group: mega-rom-sync
-  cancel-in-progress: false
+  actions: read
 jobs:
-  download:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: a
-            start: 0
-            end: 4457865579
-          - id: b
-            start: 4457865580
-            end: 8915731159
+  download-a:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 */12 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -27,30 +16,44 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 20, cache: npm}
       - run: npm ci
-      - name: Download Mega range
+      - name: Download Mega first range
         env:
           MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
-          RANGE_START: ${{ matrix.start }}
-          RANGE_END: ${{ matrix.end }}
-          OUTPUT: range-${{ matrix.id }}.bin
+          RANGE_START: 0
+          RANGE_END: 4457865579
+          OUTPUT: range-a.bin
           NAME_OUTPUT: rom-name.txt
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
-        with:
-          name: mega-sync-${{ matrix.id }}
-          path: |
-            range-${{ matrix.id }}.bin
-            rom-name.txt
-          compression-level: 0
-          retention-days: 2
+        with: {name: mega-sync-a, path: 'range-a.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
+  download-b:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 */12 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: download-a
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 20, cache: npm}
+      - run: npm ci
+      - name: Download Mega second range
+        env:
+          MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
+          RANGE_START: 4457865580
+          RANGE_END: 8915731159
+          OUTPUT: range-b.bin
+          NAME_OUTPUT: rom-name.txt
+        run: node scripts/mega-range.mjs
+      - uses: actions/upload-artifact@v4
+        with: {name: mega-sync-b, path: 'range-b.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
   publish:
-    needs: download
+    needs: [download-a, download-b]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with: {path: ranges, pattern: mega-sync-*, merge-multiple: false}
-      - name: Publish versioned release
-        env: {GH_TOKEN: ${{ github.token }}}
+      - name: Publish release named after source ZIP
+        env: {GH_TOKEN: ${{ github.token }} }
         run: |
           set -euo pipefail
           tag="rom-$(date -u +%Y%m%d%H%M%S)"
