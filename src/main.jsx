@@ -1274,14 +1274,16 @@ function App() {
             </Panel>
           </Page>
         )}
-        <section className="command-log" aria-live="polite">
-          <h2>{t("log")}</h2>
-          <pre ref={logRef}>
-            {commandLog.length
-              ? commandLog.map((item) => item.text).join("\n")
-              : t("logEmpty")}
-          </pre>
-        </section>
+        {mode && (
+          <section className="command-log" aria-live="polite">
+            <h2>{t("log")}</h2>
+            <pre ref={logRef}>
+              {commandLog.length
+                ? commandLog.map((item) => item.text).join("\n")
+                : t("logEmpty")}
+            </pre>
+          </section>
+        )}
       </main>
     </>
   );
