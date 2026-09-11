@@ -35,7 +35,7 @@ const ZH = {
   navDone: "完成",
 
   connectTitle: "连接设备",
-  connectText: "使用 Chrome 或 Edge 连接正常开机的 MIX 4。",
+  connectText: "让 MIX 4 进入 fastboot 模式，用 Chrome 或 Edge 连接。",
   connectAction: "连接设备",
 
   baseTitle: "官方底包",
@@ -160,7 +160,7 @@ const EN = {
   navDone: "Done",
 
   connectTitle: "Connect the device",
-  connectText: "Connect a booted MIX 4 with Chrome or Edge.",
+  connectText: "Put the MIX 4 in fastboot mode and connect it with Chrome or Edge.",
   connectAction: "Connect device",
 
   baseTitle: "Official firmware",
