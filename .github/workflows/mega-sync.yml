@@ -1,8 +1,8 @@
 name: Mega ROM watcher
 on:
   schedule:
-    - cron: '17 */12 * * *'
-    - cron: '47 */12 * * *'
+    - cron: "17 */12 * * *"
+    - cron: "47 */12 * * *"
   workflow_dispatch:
 permissions:
   contents: write
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: 20, cache: npm}
+        with: { node-version: 20, cache: npm }
       - run: npm ci
       - name: Download Mega first range
         env:
@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: 20, cache: npm}
+        with: { node-version: 20, cache: npm }
       - run: npm ci
       - name: Download Mega second range
         env:
