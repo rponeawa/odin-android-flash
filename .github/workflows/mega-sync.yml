@@ -33,9 +33,8 @@ jobs:
           RANGE_START: ${{ matrix.start }}
           RANGE_END: ${{ matrix.end }}
           OUTPUT: range-${{ matrix.id }}.bin
-        run: |
-          node scripts/mega-range.mjs | tee mega.log
-          sed -n 's/.*\"name\":\"\([^\"]*\\)\".*/\1/p' mega.log | head -1 > rom-name.txt
+          NAME_OUTPUT: rom-name.txt
+        run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: mega-sync-${{ matrix.id }}
