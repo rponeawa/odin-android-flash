@@ -606,6 +606,7 @@ function App() {
     [fastboot, setFastboot] = useState(null),
     [mockMode, setMockMode] = useState(false);
   const [toast, setToast] = useState(null);
+  const [leaving, setLeaving] = useState(false);
   const [paused, setPaused] = useState(false);
   const [device, setDevice] = useState(null);
   const [issued, setIssued] = useState(null);
@@ -992,6 +993,7 @@ function App() {
   };
   const advance = () => setStep((current) => current + 1);
   const restart = () => {
+    setLeaving(false);
     setMode(null);
     gate.reset();
     setPaused(false);
@@ -1038,8 +1040,24 @@ function App() {
           onDismiss={dismissToast}
         />
       )}
+      {leaving && (
+        <Confirm
+          title={t("leaveTitle")}
+          text={t("leaveText")}
+          confirmLabel={t("leaveConfirm")}
+          cancelLabel={t("cancel")}
+          onConfirm={restart}
+          onCancel={() => setLeaving(false)}
+        />
+      )}
       <header>
-        <strong>{t("appTitle")}</strong>
+        <button
+          type="button"
+          className="brand"
+          onClick={() => mode && setLeaving(true)}
+        >
+          {t("appTitle")}
+        </button>
         <div className="tools">
           <span
             className="device"
@@ -1341,6 +1359,49 @@ function FilePick({ accept, file, onPick, label }) {
         onChange={(event) => onPick(event.target.files?.[0] || null)}
       />
     </label>
+  );
+}
+function Confirm({ title, text, confirmLabel, cancelLabel, onConfirm, onCancel }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const close = (after) => {
+    setOpen(false);
+    setTimeout(after, 180);
+  };
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "Escape") close(onCancel);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+  return (
+    <div
+      className={`overlay${open ? " open" : ""}`}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) close(onCancel);
+      }}
+    >
+      <div className="dialog" role="dialog" aria-modal="true">
+        <h2>{title}</h2>
+        <p>{text}</p>
+        <div className="actions">
+          <button type="button" onClick={() => close(onConfirm)}>
+            {confirmLabel}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => close(onCancel)}
+          >
+            {cancelLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 function Select({ value, options, placeholder, onChange, disabled }) {

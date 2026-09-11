@@ -291,3 +291,38 @@ main > section { animation: fade-in 180ms ease-out both; }
 .choice-text { display: flex; flex-direction: column; gap: 4px; }
 .choice-text strong { font-size: 16px; font-weight: 500; }
 .choice-text span { color: var(--muted); font-size: 14px; font-weight: 400; }
+
+.brand {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+}
+.brand:hover { color: var(--accent); }
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(32, 33, 36, 0.5);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.overlay.open { opacity: 1; }
+.dialog {
+  width: min(420px, 100%);
+  padding: 28px;
+  background: var(--surface);
+  border-radius: 16px;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 180ms ease;
+}
+.overlay.open .dialog { transform: none; }
+.dialog h2 { margin: 0; font-size: 20px; font-weight: 500; }
+.dialog p { margin: 12px 0 0; }
+.dialog .actions { margin-top: 24px; }
