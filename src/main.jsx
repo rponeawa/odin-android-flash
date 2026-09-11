@@ -270,7 +270,8 @@ function App() {
   };
   const bootTwrp = async () => {
     if (testMode) {
-      await simulate("测试启动 TWRP");
+      await simulate("测试下载 TWRP");
+      await simulate("测试上传 TWRP");
       setMessage("测试 TWRP 已启动");
       setStep(3);
       return;
