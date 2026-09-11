@@ -511,6 +511,8 @@ function App() {
               <Actions onClick={bootTwrp} disabled={!mockMode && (!fastboot || !!busy)}>
                 {busy || "自动启动 TWRP"}
               </Actions>
+              {progress && <Progress {...progress} />}
+              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
