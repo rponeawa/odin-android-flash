@@ -16,5 +16,5 @@ jobs:
           id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false and .name == "mega-range-b") | .id' | head -1)
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > artifact.zip
           unzip -p artifact.zip > range-b.bin
-          split -b 1900m -d -a 3 range-b.bin chunk-
-          for f in chunk-*; do gh release upload rom-latest "$f" --repo "$GITHUB_REPOSITORY" --clobber; done
+          split -b 1900m -d -a 3 range-b.bin odin-rom.zip.part-b-
+          for f in odin-rom.zip.part-b-*; do gh release upload rom-latest "$f" --repo "$GITHUB_REPOSITORY" --clobber; done
