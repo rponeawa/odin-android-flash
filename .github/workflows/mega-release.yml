@@ -7,9 +7,20 @@ on:
     - cron: '17 */6 * * *'
 permissions:
   contents: write
+  actions: read
 jobs:
-  sync:
-    timeout-minutes: 360
+  ranges:
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: a
+            start: 0
+            end: 4457865579
+          - id: b
+            start: 4457865580
+            end: 8915731159
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,23 +29,36 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Resolve newest Mega ROM
-        id: resolve
-        run: |
-          meta=$(MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/mega-link.mjs)
-          echo "name=$(echo "$meta" | jq -r .name)" >> "$GITHUB_OUTPUT"
-          echo "url=$(echo "$meta" | jq -r .url)" >> "$GITHUB_OUTPUT"
-      - name: Download and split ROM with Mega JS streaming
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/sync-mega.mjs
-          cat dist/rom.json
-      - name: Publish release when content changed
+      - name: Download Mega range
+        env:
+          MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
+          RANGE_START: ${{ matrix.start }}
+          RANGE_END: ${{ matrix.end }}
+          OUTPUT: range-${{ matrix.id }}.bin
+        run: node scripts/mega-range.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mega-range-${{ matrix.id }}
+          path: range-${{ matrix.id }}.bin
+          compression-level: 0
+          retention-days: 1
+  publish:
+    needs: ranges
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ranges
+          pattern: mega-range-*
+          merge-multiple: false
+      - name: Assemble and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sha=$(cat dist/sha256.txt); tag="rom-$sha"
-          gh release view "$tag" >/dev/null 2>&1 && exit 0
-          gh release create "$tag" dist/odin-rom.zip.part-* --title "刷机包 $sha" --notes "来源：Mega 公共文件夹。SHA-256: $sha"
+          mkdir -p dist
+          cat ranges/mega-range-a/range-a.bin ranges/mega-range-b/range-b.bin > dist/odin-rom.zip
+          sha=$(sha256sum dist/odin-rom.zip | cut -d' ' -f1)
+          split -b 1900m -d -a 3 dist/odin-rom.zip dist/odin-rom.zip.part-
+          tag="rom-$sha"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" dist/odin-rom.zip.part-* --title "刷机包 $sha" --notes "来源：Mega 公共文件夹。SHA-256: $sha"
