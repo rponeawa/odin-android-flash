@@ -339,3 +339,7 @@ main > section { animation: fade-in 180ms ease-out both; }
 .dialog h2 { margin: 0; font-size: 20px; font-weight: 500; }
 .dialog p { margin: 12px 0 0; }
 .dialog .actions { margin-top: 24px; }
+
+.credit { margin: 8px 0 0; font-size: 14px; }
+.credit:first-of-type { margin-top: 32px; }
+.credit a { color: var(--accent); }

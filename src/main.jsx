@@ -19,6 +19,7 @@ const AUTH = "/api/issue";
 const PROXY = "/api/fetch?url=";
 const TWRP =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_twrp.img";
+const AUTHOR = "https://www.coolapk.com/u/4874574";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
 const RANGE = 8 * 1024 * 1024;
@@ -1173,6 +1174,13 @@ function App() {
                 </span>
               </button>
             </div>
+            <p className="credit">
+              {t("creditBy")}{" "}
+              <a href={AUTHOR} target="_blank" rel="noreferrer">
+                {t("creditName")}
+              </a>
+            </p>
+            <p className="credit">{t("creditSync")}</p>
           </Page>
         )}
         {mode && (
