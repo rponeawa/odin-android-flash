@@ -118,3 +118,31 @@ main > section { animation: fade-in 180ms ease-out both; }
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
+
+.toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 14px 16px;
+  background: #b3261e;
+  border-radius: 12px;
+  color: #fff;
+  opacity: 0;
+  transform: translate(-50%, -24px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+.toast.open { opacity: 1; transform: translate(-50%, 0); }
+.toast .material-icons { font-size: 20px; }
+.toast-text { flex: 1; line-height: 1.4; }
+.toast-close {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  color: inherit;
+  display: flex;
+}

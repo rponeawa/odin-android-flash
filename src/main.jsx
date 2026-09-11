@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Adb,
@@ -421,6 +421,11 @@ function App() {
     [fastboot, setFastboot] = useState(null),
     [message, setMessage] = useState(""),
     [mockMode, setMockMode] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastId = useRef(0);
+  const showError = (error) =>
+    setToast({ text: error.message || String(error), id: (toastId.current += 1) });
+  const dismissToast = useCallback(() => setToast(null), []);
   const logRef = useRef(null);
   const logCommand = (command) =>
     setCommandLog((items) => [
@@ -446,7 +451,7 @@ function App() {
           ),
         ),
       )
-      .catch((e) => setMessage(e.message));
+      .catch(showError);
   }, []);
   const connect = async () => {
     setBusy("连接 fastboot");
@@ -458,7 +463,7 @@ function App() {
       setMessage("已连接 fastboot");
       setStep(1);
     } catch (e) {
-      setMessage(e.message);
+      showError(e);
     } finally {
       setBusy("");
     }
@@ -486,7 +491,7 @@ function App() {
       setMessage(`已刷入 ${flashed} 个分区，设备保持在 fastboot`);
       setStep(2);
     } catch (e) {
-      setMessage(e.message);
+      showError(e);
     } finally {
       setBusy("");
       setProgress(null);
@@ -517,7 +522,7 @@ function App() {
       setAdb(device);
       setMessage(`已连接 ${device.serial}`);
     } catch (e) {
-      setMessage(e.message);
+      showError(e);
     } finally {
       setBusy("");
       setProgress(null);
@@ -550,7 +555,7 @@ function App() {
       setMessage("授权包已自动刷入");
       setStep(4);
     } catch (e) {
-      setMessage(e.message);
+      showError(e);
     } finally {
       setBusy("");
       setProgress(null);
@@ -604,7 +609,7 @@ function App() {
       setStep(5);
       setMessage("刷机包已刷入，设备正在重启");
     } catch (e) {
-      setMessage(e.message);
+      showError(e);
     } finally {
       setBusy("");
       setProgress(null);
@@ -622,6 +627,9 @@ function App() {
   const fallback = { label: busy || "等待操作", done: 0, total: 1 };
   return (
     <>
+      {toast && (
+        <Toast key={toast.id} message={toast.text} onDismiss={dismissToast} />
+      )}
       <header>
         <strong>Xiaomi MIX 4 刷机</strong>
       </header>
@@ -734,6 +742,28 @@ function App() {
         </section>
       </main>
     </>
+  );
+}
+function Toast({ message, onDismiss }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true));
+    const hide = setTimeout(() => setOpen(false), 5000);
+    const gone = setTimeout(onDismiss, 5260);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(hide);
+      clearTimeout(gone);
+    };
+  }, [onDismiss]);
+  return (
+    <div className={`toast${open ? " open" : ""}`} role="alert">
+      <span className="material-icons">error_outline</span>
+      <span className="toast-text">{message}</span>
+      <button type="button" className="toast-close" onClick={() => setOpen(false)}>
+        <span className="material-icons">close</span>
+      </button>
+    </div>
   );
 }
 function Page({ title, icon, children }) {
