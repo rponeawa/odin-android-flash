@@ -24,17 +24,12 @@ jobs:
           meta=$(MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/mega-link.mjs)
           echo "name=$(echo "$meta" | jq -r .name)" >> "$GITHUB_OUTPUT"
           echo "url=$(echo "$meta" | jq -r .url)" >> "$GITHUB_OUTPUT"
-      - name: Download ROM with resumable megatools
+      - name: Download and split ROM with Mega JS streaming
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq megatools
+          set -euo pipefail
           mkdir -p dist
-          megadl --no-progress --path dist '${{ steps.resolve.outputs.url }}'
-          file=$(find dist -type f | head -n1)
-          test -s "$file"
-          sha=$(sha256sum "$file" | cut -d' ' -f1)
-          echo "$sha" > dist/sha256.txt
-          split -b 1900m -d -a 3 "$file" dist/odin-rom.zip.part-
-          rm -f "$file"
+          MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/sync-mega.mjs
+          cat dist/rom.json
       - name: Publish release when content changed
         env:
           GH_TOKEN: ${{ github.token }}
