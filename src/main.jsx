@@ -9,7 +9,7 @@ import './style.css';
 const BASE='https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS1.0.2.0.UKMCNXM/odin_images_OS1.0.2.0.UKMCNXM_20240425.0000.00_14.0_cn_d3eb80577c.tgz';
 const REPO='https://api.github.com/repos/rponeawa/odin-android-flash/releases';
 const AUTH='/api/issue';
-const TWRP='https://github.com/rponeawa/odin-android-flash/releases/latest/download/qlp_twrp.img';
+const TWRP='https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_twrp.img';
 const CHUNK=64*1024;
 
 async function connectAdb(){
@@ -22,7 +22,7 @@ async function connectAdb(){
 }
 async function pushAndCollect(adb){
   const sync=await adb.sync();
-  const bin=await fetch('https://github.com/rponeawa/odin-android-flash/releases/latest/download/qlp_collect').then(r=>{if(!r.ok)throw Error('采集程序下载失败');return r.blob()});
+  const bin=await fetch('https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect').then(r=>{if(!r.ok)throw Error('采集程序下载失败');return r.blob()});
   await sync.write({filename:'/tmp/qlp_collect',file:bin.stream(),permission:0o755});
   const p=await adb.subprocess.noneProtocol.spawn(['sh','-c','/tmp/qlp_collect qlp_flash']);
   const out=await new Response(p.output).blob();
