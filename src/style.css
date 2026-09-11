@@ -78,3 +78,25 @@ a { color: var(--accent); }
   white-space: pre-wrap;
   font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
+
+.mode-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 18px;
+  color: #5f6368;
+}
+
+.mode-choice input {
+  width: auto;
+}
+
+.command-log {
+  height: 280px;
+}
+
+.command-log pre {
+  height: 220px;
+  overflow-y: auto;
+}

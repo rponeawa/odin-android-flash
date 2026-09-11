@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Adb,
@@ -72,6 +72,17 @@ async function downloadBlob(url, onProgress) {
     onProgress?.(done, total);
   }
   return new Blob(chunks);
+}
+async function mockDownloadBlob(onProgress, size = 8 * 1024 * 1024) {
+  const chunk = 256 * 1024;
+  const parts = [];
+  for (let done = 0; done < size; done += chunk) {
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    const length = Math.min(chunk, size - done);
+    parts.push(new Uint8Array(length));
+    onProgress?.(done + length, size);
+  }
+  return new Blob(parts);
 }
 async function extractTarGz(blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -225,29 +236,25 @@ function App() {
   const [adb, setAdb] = useState(null),
     [fastboot, setFastboot] = useState(null),
     [message, setMessage] = useState(""),
-    [testMode, setTestMode] = useState(false);
+    [mockMode, setMockMode] = useState(false);
+  const logRef = useRef(null);
   const logCommand = (text) =>
     setCommandLog((items) => [
       ...items.slice(-39),
       `${new Date().toLocaleTimeString()}  ${text}`,
     ]);
-  const executeCommand = async ({ name, mock = testMode, action, delay = 350 }) => {
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+  }, [commandLog]);
+  const executeCommand = async ({ name, mock = mockMode, action, delay = 350 }) => {
     logCommand(`${mock ? "[mock] " : ""}${name}`);
     if (mock) {
+      if (typeof action === "function") return action();
       await new Promise((resolve) => setTimeout(resolve, delay));
       return undefined;
     }
     if (typeof action !== "function") throw Error(`未实现命令：${name}`);
     return action();
-  };
-  const simulate = async (label) => {
-    setBusy(label);
-    for (let i = 0; i <= 10; i += 1) {
-      setProgress({ label, done: i, total: 10 });
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
-    setProgress(null);
-    setBusy("");
   };
   useEffect(() => {
     fetch(REPO)
@@ -264,7 +271,7 @@ function App() {
       .catch((e) => setMessage(e.message));
   }, []);
   const connect = async () => {
-    if (testMode) {
+    if (mockMode) {
       await executeCommand({ name: "usb.requestDevice(filters=fastboot)" });
       await executeCommand({ name: "fastboot getvar product" });
       setMessage("测试设备已连接");
@@ -286,12 +293,15 @@ function App() {
     }
   };
   const bootTwrp = async () => {
-    if (testMode) {
-      await executeCommand({ name: "GET qlp_twrp.img", delay: 500 });
+    if (mockMode) {
+      setBusy("下载 TWRP");
+      await executeCommand({ name: "GET qlp_twrp.img", action: () => mockDownloadBlob((done, total) => setProgress({ label: "下载 TWRP", done, total })) });
+      setProgress(null);
       await executeCommand({ name: "fastboot download <qlp_twrp.img>", delay: 600 });
       await executeCommand({ name: "fastboot boot" });
       setMessage("测试 TWRP 已启动");
       setStep(3);
+      setBusy("");
       return;
     }
     if (!fastboot) return;
@@ -326,14 +336,17 @@ function App() {
     }
   };
   const flashBase = async () => {
-    if (testMode) {
-      await executeCommand({ name: "GET official-base.tgz", delay: 500 });
+    if (mockMode) {
+      setBusy("下载并刷入官方底包");
+      await executeCommand({ name: "GET official-base.tgz", action: () => mockDownloadBlob((done, total) => setProgress({ label: "下载官方底包", done, total }), 16 * 1024 * 1024) });
+      setProgress(null);
       for (const partition of ["boot", "vendor_boot", "dtbo", "vbmeta", "super"]) {
         await executeCommand({ name: `fastboot flash ${partition} <image>`, delay: 400 });
       }
       await executeCommand({ name: "fastboot erase userdata" });
       setMessage("测试底包已刷入，设备保持在 fastboot");
       setStep(2);
+      setBusy("");
       return;
     }
     if (!fastboot) return;
@@ -359,15 +372,16 @@ function App() {
     }
   };
   const authorize = async () => {
-    if (testMode) {
+    if (mockMode) {
       await executeCommand({ name: "adb connect (TWRP)" });
       await executeCommand({ name: "adb push qlp_collect /tmp/qlp_collect" });
       await executeCommand({ name: "adb shell /tmp/qlp_collect qlp_flash" });
       await executeCommand({ name: "POST /api/issue request.zip", delay: 500 });
-      await executeCommand({ name: "GET authorization.zip", delay: 500 });
+      await executeCommand({ name: "GET authorization.zip", action: () => mockDownloadBlob((done, total) => setProgress({ label: "下载授权包", done, total }), 4 * 1024 * 1024) });
       await executeCommand({ name: "adb sideload authorization.zip", delay: 700 });
       setMessage("测试授权包已刷入");
       setStep(4);
+      setProgress(null);
       return;
     }
     if (!adb) return;
@@ -396,12 +410,13 @@ function App() {
     }
   };
   const flash = async () => {
-    if (testMode) {
-      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, delay: 500 });
+    if (mockMode) {
+      await executeCommand({ name: `GET release parts for ${rom?.name || "selected ROM"}`, action: () => mockDownloadBlob((done, total) => setProgress({ label: "下载刷机包", done, total }), 24 * 1024 * 1024) });
       await executeCommand({ name: "adb sideload release parts", delay: 1000 });
       await executeCommand({ name: "adb reboot" });
       setMessage("测试刷机包已刷入，设备正在重启");
       setStep(5);
+      setProgress(null);
       return;
     }
     if (!adb || !rom) return;
@@ -478,15 +493,10 @@ function App() {
               <Actions onClick={connect} disabled={!!busy}>
                 {busy || "连接设备"}
               </Actions>
-              <Actions
-                onClick={() => {
-                  setTestMode(true);
-                  setMessage("测试模式已开启");
-                }}
-                disabled={!!busy}
-              >
-                进入测试模式
-              </Actions>
+              <label className="mode-choice">
+                <input type="radio" name="mode" checked={mockMode} onChange={(event) => setMockMode(event.target.checked)} disabled={!!busy} />
+                Mock 模式
+              </label>
               {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
@@ -496,7 +506,7 @@ function App() {
             <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
             <Panel icon="download">
-              <Actions onClick={flashBase} disabled={!testMode && (!fastboot || !!busy)}>
+              <Actions onClick={flashBase} disabled={!mockMode && (!fastboot || !!busy)}>
                 {busy || "下载并刷入官方底包"}
               </Actions>
               {progress && <Progress {...progress} />}
@@ -508,7 +518,7 @@ function App() {
           <Page title="临时启动 TWRP">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
             <Panel icon="memory">
-              <Actions onClick={bootTwrp} disabled={!testMode && (!fastboot || !!busy)}>
+              <Actions onClick={bootTwrp} disabled={!mockMode && (!fastboot || !!busy)}>
                 {busy || "自动启动 TWRP"}
               </Actions>
             </Panel>
@@ -518,7 +528,7 @@ function App() {
           <Page title="自动授权">
             <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
             <Panel icon="vpn_key">
-              <Actions onClick={authorize} disabled={(!testMode && !adb) || !!busy}>
+              <Actions onClick={authorize} disabled={(!mockMode && !adb) || !!busy}>
                 {busy || "开始自动授权"}
               </Actions>
               {progress && <Progress {...progress} />}{" "}
@@ -548,7 +558,7 @@ function App() {
               </select>
               <Actions
                 onClick={flash}
-                disabled={(!testMode && (!rom || !adb)) || !!busy}
+                disabled={(!mockMode && (!rom || !adb)) || !!busy}
               >
                 {busy || "下载并自动刷入"}
               </Actions>
@@ -564,12 +574,10 @@ function App() {
             </Panel>
           </Page>
         )}
-        {commandLog.length > 0 && (
-          <section className="command-log" aria-live="polite">
-            <h2>执行记录</h2>
-            <pre>{commandLog.join("\n")}</pre>
-          </section>
-        )}
+        <section className="command-log" aria-live="polite">
+          <h2>日志</h2>
+          <pre ref={logRef}>{commandLog.length ? commandLog.join("\n") : "等待执行命令"}</pre>
+        </section>
       </main>
     </>
   );
