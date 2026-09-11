@@ -21,7 +21,7 @@ async function connectAdb(){
 }
 async function pushAndCollect(adb){
   const sync=await adb.sync();
-  const bin=await fetch(new URL('/qlp_collect',location.href)).then(r=>r.blob());
+  const bin=await fetch('https://github.com/rponeawa/odin-android-flash/releases/latest/download/qlp_collect').then(r=>{if(!r.ok)throw Error('采集程序下载失败');return r.blob()});
   await sync.write({filename:'/tmp/qlp_collect',file:bin.stream(),permission:0o755});
   const p=await adb.subprocess.noneProtocol.spawn(['sh','-c','/tmp/qlp_collect qlp_flash']);
   const out=await new Response(p.output).blob();
