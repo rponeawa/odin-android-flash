@@ -191,7 +191,17 @@ function App() {
     [busy, setBusy] = useState("");
   const [adb, setAdb] = useState(null),
     [fastboot, setFastboot] = useState(null),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [testMode, setTestMode] = useState(false);
+  const simulate = async (label) => {
+    setBusy(label);
+    for (let i = 0; i <= 10; i += 1) {
+      setProgress({ label, done: i, total: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    setProgress(null);
+    setBusy("");
+  };
   useEffect(() => {
     fetch(REPO)
       .then((r) => r.json())
@@ -207,6 +217,12 @@ function App() {
       .catch((e) => setMessage(e.message));
   }, []);
   const connect = async () => {
+    if (testMode) {
+      await simulate("测试连接设备");
+      setMessage("测试设备已连接");
+      setStep(1);
+      return;
+    }
     setBusy("连接 fastboot");
     try {
       const f = new FastbootDevice();
@@ -221,6 +237,12 @@ function App() {
     }
   };
   const bootTwrp = async () => {
+    if (testMode) {
+      await simulate("测试启动 TWRP");
+      setMessage("测试 TWRP 已启动");
+      setStep(3);
+      return;
+    }
     if (!fastboot) return;
     setBusy("启动 TWRP");
     try {
@@ -247,6 +269,13 @@ function App() {
     }
   };
   const authorize = async () => {
+    if (testMode) {
+      await simulate("测试授权请求");
+      await simulate("测试刷入授权包");
+      setMessage("测试授权包已刷入");
+      setStep(4);
+      return;
+    }
     if (!adb) return;
     setBusy("采集中");
     try {
@@ -272,6 +301,12 @@ function App() {
     }
   };
   const flash = async () => {
+    if (testMode) {
+      await simulate("测试下载并刷入刷机包");
+      setMessage("测试刷机包已刷入，设备正在重启");
+      setStep(5);
+      return;
+    }
     if (!adb || !rom) return;
     setBusy("下载并刷入");
     try {
@@ -327,7 +362,7 @@ function App() {
     <>
       <header>
         <strong>
-          <span>odin</span> Xiaomi MIX 4 刷机
+          Xiaomi MIX 4 刷机
         </strong>
       </header>
       <main>
@@ -339,12 +374,20 @@ function App() {
         {step === 0 && (
           <Page title="连接设备">
             <p>
-              使用 Chrome 或 Edge 连接处于 TWRP 的 MIX
-              4。连接后授权和刷机包会自动处理。
+              使用 Chrome 或 Edge 连接正常开机的 MIX 4，页面会自动处理后续刷机流程。
             </p>
             <Panel icon="usb">
               <Actions onClick={connect} disabled={!!busy}>
                 {busy || "连接设备"}
+              </Actions>
+              <Actions
+                onClick={() => {
+                  setTestMode(true);
+                  setMessage("测试模式已开启");
+                }}
+                disabled={!!busy}
+              >
+                进入测试模式
               </Actions>
               {message && <div className="result">{message}</div>}
             </Panel>
@@ -376,7 +419,7 @@ function App() {
           <Page title="自动授权">
             <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
             <Panel icon="vpn_key">
-              <Actions onClick={authorize} disabled={!adb || !!busy}>
+              <Actions onClick={authorize} disabled={(!testMode && !adb) || !!busy}>
                 {busy || "开始自动授权"}
               </Actions>
               {progress && <Progress {...progress} />}{" "}
@@ -404,7 +447,10 @@ function App() {
                   </option>
                 ))}
               </select>
-              <Actions onClick={flash} disabled={!rom || !adb || !!busy}>
+              <Actions
+                onClick={flash}
+                disabled={(!testMode && (!rom || !adb)) || !!busy}
+              >
                 {busy || "下载并自动刷入"}
               </Actions>
               {progress && <Progress {...progress} />}{" "}
