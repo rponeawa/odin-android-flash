@@ -774,6 +774,10 @@ function App() {
     return result;
   };
   useEffect(() => {
+    document.title = t("appTitle");
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  }, [lang]);
+  useEffect(() => {
     const root = document.documentElement;
     if (theme) {
       root.dataset.theme = theme;
