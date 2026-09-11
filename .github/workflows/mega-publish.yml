@@ -1,0 +1,31 @@
+name: Publish synchronized Mega ROM
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find latest range artifacts
+        id: ids
+        env: {GH_TOKEN: ${{ github.token }}}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | [.id,.name,.created_at] | @tsv' | sort -k2,2 -k3,3r | awk '$2=="mega-sync-a"&&!a++{print "a=" $1} $2=="mega-sync-b"&&!b++{print "b=" $1}' >> "$GITHUB_OUTPUT"
+          test -s "$GITHUB_OUTPUT"
+      - name: Download ranges and publish
+        env: {GH_TOKEN: ${{ github.token }}, A_ID: ${{ steps.ids.outputs.a }}, B_ID: ${{ steps.ids.outputs.b }}}
+        run: |
+          set -euo pipefail
+          mkdir -p ranges
+          for side in a b; do gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${!side^^_ID}/zip" > "ranges/$side.zip"; done
+          unzip -p ranges/a.zip > ranges/range-a.bin
+          unzip -p ranges/b.zip > ranges/range-b.bin
+          title=$(unzip -p ranges/a.zip rom-name.txt)
+          tag="rom-$(date -u +%Y%m%d%H%M%S)"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes '由 Mega watcher 自动同步。'
+          for side in a b; do split -b 1900m -d -a 3 "ranges/range-$side.bin" "odin-rom.zip.part-$side-"; for f in odin-rom.zip.part-$side-*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"; done; done

@@ -2,6 +2,7 @@ name: Mega ROM watcher
 on:
   schedule:
     - cron: '17 */12 * * *'
+    - cron: '47 */12 * * *'
   workflow_dispatch:
 permissions:
   contents: write
@@ -27,10 +28,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: {name: mega-sync-a, path: 'range-a.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
   download-b:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 */12 * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '47 */12 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    needs: download-a
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,20 +46,3 @@ jobs:
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
         with: {name: mega-sync-b, path: 'range-b.bin\nrom-name.txt', compression-level: 0, retention-days: 3}
-  publish:
-    needs: [download-a, download-b]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with: {path: ranges, pattern: mega-sync-*, merge-multiple: false}
-      - name: Publish release named after source ZIP
-        env: {GH_TOKEN: ${{ github.token }} }
-        run: |
-          set -euo pipefail
-          tag="rom-$(date -u +%Y%m%d%H%M%S)"
-          title=$(cat ranges/mega-sync-a/rom-name.txt)
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes '由 Mega watcher 自动同步。分卷按文件名顺序拼接。'
-          for side in a b; do
-            split -b 1900m -d -a 3 "ranges/mega-sync-$side/range-$side.bin" "odin-rom.zip.part-$side-"
-            for f in odin-rom.zip.part-$side-*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"; done
-          done
