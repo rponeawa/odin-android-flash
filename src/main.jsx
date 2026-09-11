@@ -466,13 +466,17 @@ async function issueAuthorization(request, onProgress, gate) {
     xhr.ontimeout = () => reject(new AppError("authTimeout"));
     xhr.timeout = 120000;
     xhr.onload = () => {
+      const data = xhr.response;
+      if (data?.error) {
+        reject(Error(data.error));
+        return;
+      }
       if (xhr.status < 200 || xhr.status >= 300) {
         reject(new AppError("authHttp", { status: xhr.status }));
         return;
       }
-      const data = xhr.response;
       if (!data?.ok || !data.download) {
-        reject(data?.error ? Error(data.error) : new AppError("authNoPackage"));
+        reject(new AppError("authNoPackage"));
         return;
       }
       resolve(data);
