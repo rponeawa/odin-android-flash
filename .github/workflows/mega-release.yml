@@ -7,9 +7,20 @@ on:
     - cron: '17 */6 * * *'
 permissions:
   contents: write
-  actions: read
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - id: meta
+        run: echo "tag=rom-latest" >> "$GITHUB_OUTPUT"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view rom-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create rom-latest --repo "$GITHUB_REPOSITORY" --title '最新刷机包' --notes '由 Mega 同步。分卷按文件名顺序拼接。'
   ranges:
+    needs: prepare
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -36,29 +47,16 @@ jobs:
           RANGE_END: ${{ matrix.end }}
           OUTPUT: range-${{ matrix.id }}.bin
         run: node scripts/mega-range.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mega-range-${{ matrix.id }}
-          path: range-${{ matrix.id }}.bin
-          compression-level: 0
-          retention-days: 1
-  publish:
-    needs: ranges
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: ranges
-          pattern: mega-range-*
-          merge-multiple: false
-      - name: Assemble and publish release
+      - name: Split and upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          cat ranges/mega-range-a/range-a.bin ranges/mega-range-b/range-b.bin > dist/odin-rom.zip
-          sha=$(sha256sum dist/odin-rom.zip | cut -d' ' -f1)
-          split -b 1900m -d -a 3 dist/odin-rom.zip dist/odin-rom.zip.part-
-          tag="rom-$sha"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" dist/odin-rom.zip.part-* --title "刷机包 $sha" --notes "来源：Mega 公共文件夹。SHA-256: $sha"
+          split -b 1900m -d -a 3 "range-${{ matrix.id }}.bin" "odin-rom.zip.part-${{ matrix.id }}-"
+          for f in odin-rom.zip.part-${{ matrix.id }}-*; do
+            for n in 1 2 3 4 5; do
+              if gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber; then break; fi
+              sleep 10
+            done
+          done
