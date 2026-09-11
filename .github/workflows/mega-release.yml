@@ -12,24 +12,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Mega downloader
         run: npm ci
-      - name: Download newest 秋城落叶 package
+      - name: Download and split newest 秋城落叶 package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           MEGA_FOLDER_URL='https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ' node scripts/sync-mega.mjs
-          file=$(find dist -type f | grep '秋城落叶' | sort | tail -n1)
-          test -n "$file"
-          cp "$file" dist/odin-rom.zip
-      - name: Split for GitHub Release
-        run: split -b 1900m -d -a 3 dist/odin-rom.zip dist/odin-rom.zip.part-
+      - name: Split metadata
+        id: meta
+        run: echo "sha=$(jq -r .sha256 dist/rom.json)" >> "$GITHUB_OUTPUT"
       - name: Publish release when content changed
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          sha=$(sha256sum dist/odin-rom.zip | cut -d' ' -f1)
+          sha="${{ steps.meta.outputs.sha }}"
           tag="rom-$sha"
           if gh release view "$tag" >/dev/null 2>&1; then exit 0; fi
           gh release create "$tag" dist/odin-rom.zip.part-* --title "刷机包 $sha" --notes "来源：Mega 公共文件夹。SHA-256: $sha"
