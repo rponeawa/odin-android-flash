@@ -27,6 +27,13 @@ const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
+class StepError extends Error {
+  constructor(hint, cause) {
+    super(hint);
+    this.detail = cause?.message || String(cause);
+  }
+}
+
 function createGate() {
   let paused = false;
   let waiters = [];
@@ -185,6 +192,27 @@ function rangedStream(url, total, onProgress, gate) {
   });
 }
 
+function blobStream(blob, onProgress, gate) {
+  const reader = blob.stream().getReader();
+  let done = 0;
+  const started = performance.now();
+  return new ReadableStream({
+    async pull(controller) {
+      await gate?.wait();
+      const part = await reader.read();
+      if (part.done) {
+        controller.close();
+        return;
+      }
+      done += part.value.length;
+      const elapsed = performance.now() - started - (gate?.pausedMs || 0);
+      onProgress?.(done, blob.size, done / Math.max(0.001, elapsed / 1000));
+      controller.enqueue(part.value);
+    },
+    cancel: () => reader.cancel(),
+  });
+}
+
 function byteReader(stream) {
   const reader = stream.getReader();
   const queue = [];
@@ -276,11 +304,16 @@ function packagePath(name) {
   return name.split("/").slice(1).join("/");
 }
 
-async function collectBasePackage(url, onDownload, gate) {
-  const { total, ranged } = await probeSize(url);
+async function basePackageStream(source, onProgress, gate) {
+  if (source instanceof Blob) return blobStream(source, onProgress, gate);
+  const { total, ranged } = await probeSize(source);
   if (!total) throw Error("无法读取官方底包大小");
   if (!ranged) throw Error("官方底包源站不支持分段下载");
-  const stream = rangedStream(url, total, onDownload, gate).pipeThrough(
+  return rangedStream(source, total, onProgress, gate);
+}
+
+async function collectBasePackage(source, onDownload, gate) {
+  const stream = (await basePackageStream(source, onDownload, gate)).pipeThrough(
     new DecompressionStream("gzip"),
   );
   const files = new Map();
@@ -339,7 +372,7 @@ function parseFlashScript(script) {
   return steps;
 }
 
-async function runFlashScript(fastboot, files, steps, onFlash, onCommand) {
+async function runFlashScript(fastboot, files, steps, onFlash, run) {
   let index = 0;
   for (const step of steps) {
     index += 1;
@@ -347,19 +380,22 @@ async function runFlashScript(fastboot, files, steps, onFlash, onCommand) {
     if (step.verb === "flash") {
       const image = files.get(step.file);
       if (!image) throw Error(`底包缺少 ${step.file}`);
-      onCommand?.(`fastboot flash ${step.partition} ${step.file}`);
-      await fastboot.flashBlob(step.partition, image, (p) =>
-        onFlash(`刷入 ${step.partition} ${label}`, p),
+      await run(`fastboot flash ${step.partition} ${step.file}`, () =>
+        fastboot.flashBlob(step.partition, image, (p) =>
+          onFlash(`刷入 ${step.partition} ${label}`, p),
+        ),
       );
     } else if (step.verb === "erase") {
-      onCommand?.(`fastboot erase ${step.partition}`);
       onFlash(`擦除 ${step.partition} ${label}`, 0);
-      await fastboot.runCommand(`erase:${step.partition}`);
+      await run(`fastboot erase ${step.partition}`, () =>
+        fastboot.runCommand(`erase:${step.partition}`),
+      );
       onFlash(`擦除 ${step.partition} ${label}`, 1);
     } else if (step.verb === "set_active") {
-      onCommand?.(`fastboot set_active ${step.slot}`);
       onFlash(`切换槽位 ${step.slot} ${label}`, 0);
-      await fastboot.runCommand(`set_active:${step.slot}`);
+      await run(`fastboot set_active ${step.slot}`, () =>
+        fastboot.runCommand(`set_active:${step.slot}`),
+      );
       onFlash(`切换槽位 ${step.slot} ${label}`, 1);
     }
   }
@@ -402,7 +438,15 @@ async function issueAuthorization(request, onProgress, gate) {
 }
 
 async function sendSideload(adb, source, onProgress, total, gate) {
-  const socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
+  let socket;
+  try {
+    socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
+  } catch (e) {
+    throw new StepError(
+      "设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload，滑动确认后重试",
+      e,
+    );
+  }
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
   let sent = 0;
@@ -543,17 +587,39 @@ function App() {
     [mockMode, setMockMode] = useState(false);
   const [toast, setToast] = useState(null);
   const [paused, setPaused] = useState(false);
+  const [baseFile, setBaseFile] = useState(null);
+  const [twrpFile, setTwrpFile] = useState(null);
+  const [romFile, setRomFile] = useState(null);
   const gate = useRef(createGate()).current;
   const toastId = useRef(0);
-  const showError = (error) =>
-    setToast({ text: error.message || String(error), id: (toastId.current += 1) });
+  const showError = (error) => {
+    const detail = error?.detail || error?.message || String(error);
+    logCommand(`错误 ${detail}`);
+    setToast({
+      text: error?.message || detail,
+      id: (toastId.current += 1),
+    });
+  };
   const dismissToast = useCallback(() => setToast(null), []);
   const logRef = useRef(null);
-  const logCommand = (command) =>
+  const logId = useRef(0);
+  const logCommand = (command) => {
+    const id = (logId.current += 1);
     setCommandLog((items) => [
       ...items.slice(-39),
-      `${new Date().toLocaleTimeString()}  ${mockMode ? "[mock] " : ""}${command}`,
+      {
+        id,
+        text: `${new Date().toLocaleTimeString()}  ${mockMode ? "[mock] " : ""}${command}`,
+      },
     ]);
+    return id;
+  };
+  const settleCommand = (id, reply) =>
+    setCommandLog((items) =>
+      items.map((item) =>
+        item.id === id ? { ...item, text: `${item.text}  ${reply}` } : item,
+      ),
+    );
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [commandLog]);
@@ -574,8 +640,15 @@ function App() {
     setProgress(null);
   };
   const run = async (command, action) => {
-    logCommand(command);
-    return action();
+    const id = logCommand(command);
+    const started = performance.now();
+    const result = await action();
+    const reply = result?.text?.trim();
+    settleCommand(
+      id,
+      reply || `OKAY [${((performance.now() - started) / 1000).toFixed(2)}s]`,
+    );
+    return result;
   };
   useEffect(() => {
     fetch(REPO)
@@ -595,7 +668,14 @@ function App() {
     setBusy("连接 fastboot");
     try {
       const device = mockMode ? mockFastboot() : new FastbootDevice();
-      await run("fastboot usb connect", () => device.connect());
+      await run("fastboot usb connect", () =>
+        device.connect().catch((e) => {
+          throw new StepError(
+            "没有找到 fastboot 设备。请让手机进入 fastboot 后用数据线连接，并在弹出的窗口中选择设备",
+            e,
+          );
+        }),
+      );
       await run("fastboot getvar product", () => device.getVariable("product"));
       setFastboot(device);
       setMessage("已连接 fastboot");
@@ -608,12 +688,12 @@ function App() {
   };
   const flashBase = async () => {
     if (!fastboot) return;
-    begin("下载官方底包");
+    const label = baseFile ? "读取本地底包" : "下载官方底包";
+    begin(label);
     try {
       const files = await collectBasePackage(
-        BASE,
-        (done, total, speed) =>
-          setProgress({ label: "下载官方底包", done, total, speed }),
+        baseFile || BASE,
+        (done, total, speed) => setProgress({ label, done, total, speed }),
         gate,
       );
       const script = files.get(SCRIPT);
@@ -623,7 +703,7 @@ function App() {
       setBusy("刷入官方底包");
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
-      await runFlashScript(fastboot, files, steps, onFlash, logCommand);
+      await runFlashScript(fastboot, files, steps, onFlash, run);
       setMessage(`已执行 ${SCRIPT} 的 ${steps.length} 条命令，设备保持在 fastboot`);
       setStep(2);
     } catch (e) {
@@ -632,17 +712,23 @@ function App() {
       finish();
     }
   };
+  const skipBase = () => {
+    setMessage("已跳过官方底包");
+    setStep(2);
+  };
   const bootTwrp = async () => {
     if (!fastboot) return;
     begin("启动 TWRP");
     try {
-      const blob = await downloadBlob(
-        TWRP,
-        (done, total, speed) =>
-          setProgress({ label: "下载 TWRP", done, total, speed }),
-        gate,
-      );
-      await run("fastboot boot <qlp_twrp.img>", () =>
+      const blob =
+        twrpFile ||
+        (await downloadBlob(
+          TWRP,
+          (done, total, speed) =>
+            setProgress({ label: "下载 TWRP", done, total, speed }),
+          gate,
+        ));
+      await run(`fastboot boot <${twrpFile?.name || "qlp_twrp.img"}>`, () =>
         fastboot.bootBlob(blob, (p) =>
           setProgress({
             label: "上传 TWRP",
@@ -655,7 +741,14 @@ function App() {
       setStep(3);
       setBusy("等待 ADB");
       const device = await run("adb connect (TWRP)", () =>
-        mockMode ? mockAdb() : connectAdb(),
+        mockMode
+          ? mockAdb()
+          : connectAdb().catch((e) => {
+              throw new StepError(
+                "没有找到 ADB 设备。请等待 TWRP 启动完成，并在手机上允许这台电脑调试",
+                e,
+              );
+            }),
       );
       setAdb(device);
       setMessage(`已连接 ${device.serial}`);
@@ -699,9 +792,33 @@ function App() {
     }
   };
   const flash = async () => {
-    if (!adb || !rom) return;
-    begin("下载并刷入");
+    if (!adb || (!rom && !romFile)) return;
+    begin(romFile ? "刷入本地刷机包" : "下载并刷入");
     try {
+      if (romFile) {
+        const started = performance.now();
+        await run(`adb sideload ${romFile.name}`, () =>
+          sendSideload(
+            adb,
+            romFile,
+            (done, total) => {
+              const elapsed = performance.now() - started - gate.pausedMs;
+              setProgress({
+                label: "刷入本地刷机包",
+                done,
+                total,
+                speed: done / Math.max(0.001, elapsed / 1000),
+              });
+            },
+            romFile.size,
+            gate,
+          ),
+        );
+        await run("adb reboot", () => adb.power.reboot());
+        setStep(5);
+        setMessage("刷机包已刷入，设备正在重启");
+        return;
+      }
       const assets = rom.assets
         .filter((a) => /\.part-[ab]-\d+$/.test(a.name))
         .sort((a, b) =>
@@ -754,6 +871,9 @@ function App() {
   const restart = () => {
     gate.reset();
     setPaused(false);
+    setBaseFile(null);
+    setTwrpFile(null);
+    setRomFile(null);
     setFastboot(null);
     setAdb(null);
     setRom(null);
@@ -807,11 +927,31 @@ function App() {
         )}
         {step === 1 && (
           <Page title="官方底包" icon="download">
-            <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
+            <p>
+              页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。设备已在官方固件时可以跳过这一步。
+            </p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
             <Panel>
-              <Actions extra={pauseButton} onClick={flashBase} disabled={!fastboot || !!busy}>
-                {busy || "下载并刷入官方底包"}
+              <FilePick
+                accept=".tgz,.gz,application/gzip"
+                file={baseFile}
+                onPick={setBaseFile}
+                label="选择本地底包，留空则下载官方底包"
+              />
+              <Actions
+                extra={
+                  <>
+                    {pauseButton}
+                    <button type="button" className="secondary" onClick={skipBase} disabled={!!busy}>
+                      <span className="material-icons">skip_next</span>
+                      跳过
+                    </button>
+                  </>
+                }
+                onClick={flashBase}
+                disabled={!fastboot || !!busy}
+              >
+                {busy || (baseFile ? "刷入本地底包" : "下载并刷入官方底包")}
               </Actions>
               <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
@@ -822,6 +962,12 @@ function App() {
           <Page title="临时启动 TWRP" icon="memory">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
             <Panel>
+              <FilePick
+                accept=".img"
+                file={twrpFile}
+                onPick={setTwrpFile}
+                label="选择本地 TWRP 镜像，留空则下载"
+              />
               <Actions extra={pauseButton} onClick={bootTwrp} disabled={!fastboot || !!busy}>
                 {busy || "自动启动 TWRP"}
               </Actions>
@@ -832,7 +978,9 @@ function App() {
         )}
         {step === 3 && (
           <Page title="自动授权" icon="vpn_key">
-            <p>采集、提交授权和刷入授权包会在浏览器端连续完成。</p>
+            <p>
+              采集与提交在 TWRP 的普通 ADB 下完成。页面开始刷入授权包前，请在 TWRP 中选择 高级 - ADB Sideload。
+            </p>
             <Panel>
               <Actions extra={pauseButton} onClick={authorize} disabled={!adb || !!busy}>
                 {busy || "开始自动授权"}
@@ -845,8 +993,8 @@ function App() {
         {step === 4 && (
           <Page title="自动刷入刷机包" icon="inventory_2">
             <p>
-              选择刷机版本。页面会从 GitHub Release 分卷流式下载并自动执行 adb
-              sideload。
+              选择刷机版本或本地刷机包。开始前请在 TWRP 中选择 高级 - ADB
+              Sideload，页面会边下载边执行 sideload。
             </p>
             <Panel>
               <select
@@ -862,8 +1010,18 @@ function App() {
                   </option>
                 ))}
               </select>
-              <Actions extra={pauseButton} onClick={flash} disabled={!rom || !adb || !!busy}>
-                {busy || "下载并自动刷入"}
+              <FilePick
+                accept=".zip"
+                file={romFile}
+                onPick={setRomFile}
+                label="选择本地刷机包，留空则下载所选版本"
+              />
+              <Actions
+                extra={pauseButton}
+                onClick={flash}
+                disabled={(!rom && !romFile) || !adb || !!busy}
+              >
+                {busy || (romFile ? "刷入本地刷机包" : "下载并自动刷入")}
               </Actions>
               <Progress {...(progress || fallback)} />
               {message && <div className="result">{message}</div>}
@@ -881,7 +1039,9 @@ function App() {
         <section className="command-log" aria-live="polite">
           <h2>日志</h2>
           <pre ref={logRef}>
-            {commandLog.length ? commandLog.join("\n") : "等待执行命令"}
+            {commandLog.length
+              ? commandLog.map((item) => item.text).join("\n")
+              : "等待执行命令"}
           </pre>
         </section>
       </main>
@@ -923,6 +1083,19 @@ function Page({ title, icon, children }) {
 }
 function Panel({ children }) {
   return <div className="panel">{children}</div>;
+}
+function FilePick({ accept, file, onPick, label }) {
+  return (
+    <label className="file-pick">
+      <span className="material-icons">{file ? "description" : "folder_open"}</span>
+      <span className="file-name">{file ? file.name : label}</span>
+      <input
+        type="file"
+        accept={accept}
+        onChange={(event) => onPick(event.target.files?.[0] || null)}
+      />
+    </label>
+  );
 }
 function Actions({ onClick, disabled, children, extra }) {
   return (

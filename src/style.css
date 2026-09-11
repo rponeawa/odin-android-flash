@@ -156,3 +156,18 @@ main > section { animation: fade-in 180ms ease-out both; }
   color: inherit;
   display: flex;
 }
+
+.file-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: #5f6368;
+  cursor: pointer;
+}
+.file-pick .material-icons { font-size: 20px; color: var(--accent); }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-pick input { display: none; }
