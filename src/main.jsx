@@ -1192,7 +1192,7 @@ function App() {
                 {busy ||
                   (baseFile
                     ? t("actionFlashSelected")
-                    : t("actionDownloadFlash"))}
+                    : t("actionDownloadBase"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1216,7 +1216,7 @@ function App() {
                 {busy ||
                   (twrpFile
                     ? t("actionBootSelected")
-                    : t("actionDownloadBoot"))}
+                    : t("actionDownloadTwrp"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1284,7 +1284,7 @@ function App() {
                 {busy ||
                   (romFile
                     ? t("actionFlashSelected")
-                    : t("actionDownloadFlash"))}
+                    : t("actionDownloadRom"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
