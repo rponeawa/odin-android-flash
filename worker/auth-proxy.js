@@ -1,4 +1,7 @@
 const UPSTREAM = "https://file.xkji.com/xiaomi/api/issue";
+const RELEASES =
+  "https://api.github.com/repos/rponeawa/odin-android-flash/releases";
+const RELEASES_TTL = 600;
 const ORIGIN = "https://odin.androidflash.xyz";
 const HOSTS = new Set([
   "bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com",
@@ -42,6 +45,25 @@ async function issue(request) {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
+async function releases(request) {
+  if (request.method !== "GET" && request.method !== "HEAD")
+    return new Response("Method Not Allowed", { status: 405, headers: cors() });
+  const upstream = await fetch(RELEASES, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "odin-android-flash",
+    },
+    cf: { cacheTtl: RELEASES_TTL, cacheEverything: true },
+  });
+  const headers = cors();
+  headers.set("Content-Type", "application/json");
+  headers.set("Cache-Control", `public, max-age=${RELEASES_TTL}`);
+  return new Response(request.method === "HEAD" ? null : upstream.body, {
+    status: upstream.status,
+    headers,
+  });
+}
+
 async function download(request, url) {
   if (request.method !== "GET" && request.method !== "HEAD")
     return new Response("Method Not Allowed", { status: 405, headers: cors() });
@@ -82,6 +104,7 @@ export default {
     if (request.method === "OPTIONS")
       return new Response(null, { status: 204, headers: cors() });
     if (url.pathname === "/api/issue") return issue(request);
+    if (url.pathname === "/api/releases") return releases(request);
     if (url.pathname === "/api/fetch") return download(request, url);
     return new Response("Not Found", { status: 404, headers: cors() });
   },

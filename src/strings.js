@@ -99,6 +99,7 @@ const ZH = {
     "没有找到 ADB 设备。请确认 TWRP 已在对应模式，并在手机上允许这台电脑调试",
   notSideload:
     "设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload，滑动确认后重试",
+  releasesFailed: "无法读取版本列表 HTTP {status}",
   downloadFailed: "下载失败 HTTP {status}",
   partDownloadFailed: "下载分卷失败 HTTP {status}",
   sizeFailed: "无法读取文件大小 HTTP {status}",
@@ -222,6 +223,7 @@ const EN = {
     "No ADB device found. Check that TWRP is in the right mode and allow this computer on the phone.",
   notSideload:
     "The device is not in ADB Sideload. In TWRP choose Advanced - ADB Sideload, swipe to confirm and try again.",
+  releasesFailed: "Could not read the release list, HTTP {status}",
   downloadFailed: "Download failed, HTTP {status}",
   partDownloadFailed: "Part download failed, HTTP {status}",
   sizeFailed: "Could not read the file size, HTTP {status}",
