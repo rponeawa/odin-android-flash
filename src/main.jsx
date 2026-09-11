@@ -73,6 +73,38 @@ async function downloadBlob(url, onProgress) {
   }
   return new Blob(chunks);
 }
+async function extractTarGz(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const data = new Uint8Array(await new Response(
+    new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+  ).arrayBuffer());
+  const files = new Map();
+  for (let offset = 0; offset + 512 <= data.length; ) {
+    const name = new TextDecoder().decode(data.slice(offset, offset + 100)).replace(/\0.*$/, "");
+    if (!name) break;
+    const sizeText = new TextDecoder().decode(data.slice(offset + 124, offset + 136)).replace(/\0.*$/, "").trim();
+    const size = parseInt(sizeText, 8) || 0;
+    const start = offset + 512;
+    files.set(name, new Blob([data.slice(start, start + size)]));
+    offset = start + Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+async function flashBasePackage(fastboot, blob, onProgress) {
+  const files = await extractTarGz(blob);
+  const images = [...files.entries()].filter(([name]) => /\.img$/i.test(name));
+  const partitions = images.map(([name]) => name.split("/").pop().replace(/\.img$/i, ""));
+  if (!images.length) throw Error("官方底包中没有找到镜像文件");
+  let index = 0;
+  for (const [name, image] of images) {
+    const partition = partitions[index++];
+    if (/^(userdata|cache|metadata)$/i.test(partition)) continue;
+    await fastboot.flashBlob(partition, image, (p) =>
+      onProgress?.(index - 1 + p, images.length),
+    );
+  }
+  await fastboot.runCommand("erase:userdata");
+}
 async function issueAuthorization(request, onProgress) {
   const fd = new FormData();
   fd.append("file", request, "request.zip");
@@ -268,6 +300,31 @@ function App() {
       setBusy("");
     }
   };
+  const flashBase = async () => {
+    if (testMode) {
+      await simulate("测试下载并刷入官方底包");
+      setMessage("测试底包已刷入，设备保持在 fastboot");
+      setStep(2);
+      return;
+    }
+    if (!fastboot) return;
+    setBusy("下载并刷入官方底包");
+    try {
+      const blob = await downloadBlob(BASE, (done, total) =>
+        setProgress({ label: "下载官方底包", done, total }),
+      );
+      await flashBasePackage(fastboot, blob, (done, total) =>
+        setProgress({ label: "刷入官方底包", done, total }),
+      );
+      setMessage("官方底包已刷入，设备保持在 fastboot");
+      setStep(2);
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setBusy("");
+      setProgress(null);
+    }
+  };
   const authorize = async () => {
     if (testMode) {
       await simulate("测试授权请求");
@@ -395,13 +452,14 @@ function App() {
         )}
         {step === 1 && (
           <Page title="官方底包">
-            <p>先使用清除所有数据的方式刷入官方底包，并保持设备在 fastboot。</p>
+            <p>页面会自动下载并刷入官方底包，完成后保持设备在 fastboot。</p>
             <div className="warning">此操作会清除手机上的全部数据。</div>
             <Panel icon="download">
-              <a href={BASE} target="_blank" rel="noreferrer">
-                打开官方底包
-              </a>
-              <Actions onClick={bootTwrp}>底包已完成，自动启动 TWRP</Actions>
+              <Actions onClick={flashBase} disabled={!testMode && (!fastboot || !!busy)}>
+                {busy || "下载并刷入官方底包"}
+              </Actions>
+              {progress && <Progress {...progress} />}
+              {message && <div className="result">{message}</div>}
             </Panel>
           </Page>
         )}
@@ -409,7 +467,7 @@ function App() {
           <Page title="临时启动 TWRP">
             <p>页面会通过 WebUSB 自动执行 fastboot boot。</p>
             <Panel icon="memory">
-              <Actions onClick={bootTwrp} disabled={!fastboot || !!busy}>
+              <Actions onClick={bootTwrp} disabled={!testMode && (!fastboot || !!busy)}>
                 {busy || "自动启动 TWRP"}
               </Actions>
             </Panel>
