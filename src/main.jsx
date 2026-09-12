@@ -213,19 +213,18 @@ async function pushAndCollect(adb, gate, run) {
       permission: 0o755,
     }),
   );
+  // 采集程序把包写到手机上的文件，然后把那个路径打到 stdout
   const proc = await run(
     "adb shell /tmp/qlp_collect qlp_flash",
     () =>
       adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
   );
-  const stdout = await new Response(proc.output).blob();
-  // 采集程序未必把包写给 stdout，先看看它在手机上留下了什么。
-  // run 会把返回值记在该命令后面，不需要另外的日志入口。
-  await run("adb shell ls -l /tmp", async () => {
-    const listing = await adb.subprocess.noneProtocol.spawnWaitText("ls -l /tmp");
-    return listing.trim() || "（/tmp 是空的）";
-  });
-  const out = stdout;
+  const path = (await new Response(proc.output).blob()).text().then((t) => t.trim());
+  const where = await path;
+  if (!where) throw new AppError("collectEmpty");
+  const out = await run(`adb pull ${where}`, () =>
+    new Response(sync.read(where)).blob(),
+  );
   if (!out.size) throw new AppError("collectEmpty");
   return out;
 }
