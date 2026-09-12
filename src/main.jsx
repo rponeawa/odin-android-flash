@@ -1588,7 +1588,7 @@ function App() {
   // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作
   const blocked = !!busy || !deviceReady;
   const deviceButton =
-    view === "collect" || view === "rom" ? (
+    view === "collect" || view === "rom" || !deviceReady ? (
       <button
         type="button"
         className="secondary"
