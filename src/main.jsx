@@ -219,11 +219,12 @@ async function pushAndCollect(adb, gate, run) {
       adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
   );
   const stdout = await new Response(proc.output).blob();
-  // 采集程序未必把包写给 stdout，先看看它在手机上留下了什么
-  const listing = await run("adb shell ls -l /tmp", () =>
-    adb.subprocess.noneProtocol.spawnWaitText("ls -l /tmp"),
-  );
-  logCommand(listing.trim() || "（/tmp 是空的）");
+  // 采集程序未必把包写给 stdout，先看看它在手机上留下了什么。
+  // run 会把返回值记在该命令后面，不需要另外的日志入口。
+  await run("adb shell ls -l /tmp", async () => {
+    const listing = await adb.subprocess.noneProtocol.spawnWaitText("ls -l /tmp");
+    return listing.trim() || "（/tmp 是空的）";
+  });
   const out = stdout;
   if (!out.size) throw new AppError("collectEmpty");
   return out;
