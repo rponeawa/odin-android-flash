@@ -213,7 +213,11 @@ async function pushAndCollect(adb, gate, run) {
     }),
   );
   const p = await run("adb shell /tmp/qlp_collect qlp_flash", () =>
-    adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
+    adb.subprocess.noneProtocol.spawn([
+      "sh",
+      "-c",
+      "/tmp/qlp_collect qlp_flash",
+    ]),
   );
   const out = await new Response(p.output).blob();
   if (!out.size) throw new AppError("collectEmpty");
@@ -1009,12 +1013,14 @@ function mockSideloadSocket(total) {
   };
 }
 
+// Mock 模式下采集程序交出的东西。没有真实的 request.zip 就没法继续，
+// 与其塞个占位数据让授权服务报"不是有效 zip"，不如在这里说清楚。
 async function mockCollectorOutput() {
   const local = await fetch("/request.zip")
     .then((r) => (r.ok ? r.blob() : null))
     .catch(() => null);
   if (local) return local;
-  return new Blob([new TextEncoder().encode("mock authorization request")]);
+  throw new AppError("mockNeedsRequest");
 }
 
 function mockAdb() {
@@ -1387,6 +1393,9 @@ function App() {
     begin("busyCollect");
     try {
       const request = await pushAndCollect(adb, gate, run);
+      logCommand(
+        `采集得到 ${request.size} 字节，头 ${(await headHex(request)).slice(0, 23)}`,
+      );
       phase("busySubmit");
       const result = await issueAuthorization(
         request,

@@ -96,6 +96,8 @@ const ZH = {
 
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
   noOpfs: "当前浏览器不支持本地暂存，无法处理大文件。请使用 Chrome 或 Edge",
+  mockNeedsRequest:
+    "Mock 模式需要一份真实的 request.zip 放在项目的 public/request.zip，并通过本地开发服务器打开页面",
   noFastbootDevice:
     "找到了设备但无法连接。请关闭其他占用 USB 的程序（adb、Android File Transfer 等）后重试",
   chooseDevice: "选择设备",
@@ -221,7 +223,10 @@ const EN = {
   logError: "error {detail}",
 
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
-  noOpfs: "This browser cannot stage files locally, so large packages cannot be handled. Use Chrome or Edge.",
+  noOpfs:
+    "This browser cannot stage files locally, so large packages cannot be handled. Use Chrome or Edge.",
+  mockNeedsRequest:
+    "Mock mode needs a real request.zip at public/request.zip in the project, served by the local dev server",
   noFastbootDevice:
     "Found the device but could not connect. Close other programs using it (adb, Android File Transfer) and try again.",
   chooseDevice: "Choose device",
