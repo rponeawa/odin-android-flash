@@ -155,6 +155,19 @@ async function pushAndCollect(adb, gate) {
   return out;
 }
 
+// 进度回调按固定间隔放行。本地写入每秒会产生上千个数据块，
+// 逐个 setState 会让 React 一直重渲染，界面看起来像卡住了。
+function throttled(fn, ms = 250) {
+  if (!fn) return undefined;
+  let last = 0;
+  return (...args) => {
+    const now = performance.now();
+    if (now - last < ms) return;
+    last = now;
+    fn(...args);
+  };
+}
+
 async function opfsRoot() {
   if (!navigator.storage?.getDirectory) throw new AppError("noOpfs");
   return navigator.storage.getDirectory();
@@ -177,6 +190,7 @@ async function downloadToFile(url, name, onProgress, gate) {
   const root = await opfsRoot();
   const handle = await root.getFileHandle(name, { create: true });
   const started = performance.now();
+  const report = throttled(onProgress);
   let written = 0;
   let total = 0;
   let lastError = null;
@@ -211,13 +225,17 @@ async function downloadToFile(url, name, onProgress, gate) {
           written += part.value.length;
           arm();
           const elapsed = performance.now() - started - (gate?.pausedMs || 0);
-          onProgress?.(written, total, written / Math.max(0.001, elapsed / 1000));
+          report?.(written, total, written / Math.max(0.001, elapsed / 1000));
         }
       } finally {
         clearTimeout(timer);
         await writable.close();
       }
-      if (total > 0 && written >= total) return await handle.getFile();
+      if (total > 0 && written >= total) {
+        const elapsed = performance.now() - started - (gate?.pausedMs || 0);
+        onProgress?.(written, total, written / Math.max(0.001, elapsed / 1000));
+        return await handle.getFile();
+      }
       lastError = new AppError("downloadFailed", { status: 200 });
     } catch (e) {
       lastError = e;
@@ -298,6 +316,7 @@ async function extractTarStream(stream, onEntry) {
 async function extractBasePackage(file, onProgress) {
   const root = await opfsRoot();
   const files = new Map();
+  const report = throttled(onProgress);
   let scriptName = "";
   let scriptText = "";
   let written = 0;
@@ -325,12 +344,13 @@ async function extractBasePackage(file, onProgress) {
       write: async (chunk) => {
         await writable.write(chunk);
         written += chunk.length;
-        onProgress?.(written);
+        report?.(written);
       },
       end: () => writable.close(),
     };
   });
   if (!scriptName) throw new AppError("baseNoScript", { script: SCRIPT });
+  onProgress?.(written);
   return { files, scriptName, scriptText };
 }
 
@@ -1132,7 +1152,8 @@ function App() {
       setBusy(t("busyUnpackBase"));
       const { files, scriptName, scriptText } = await extractBasePackage(
         archive,
-        (done) => setProgress({ label: t("busyUnpackBase"), done }),
+        (done) =>
+          setProgress({ label: t("busyUnpackBase"), done, total: 0 }),
       );
       const root = scriptName.slice(0, scriptName.length - SCRIPT.length);
       const resolve = async (file) => {
