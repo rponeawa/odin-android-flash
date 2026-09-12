@@ -1572,19 +1572,20 @@ function App() {
   const needsFastboot = view === "base" || view === "twrp";
   const needsAdb = view === "collect" || view === "auth" || view === "rom";
   const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
-  // 只在设备真的换了模式、或者手上没有设备时才给这个按钮。连接之后到 TWRP
-  // 启动之前是同一个 fastboot 设备，没必要让用户重选。
-  const deviceButton = deviceReady ? null : (
-    <button
-      type="button"
-      className="secondary"
-      onClick={selectDevice}
-      disabled={!!busy}
-    >
-      <span className="material-icons">usb</span>
-      {t("chooseDevice")}
-    </button>
-  );
+  // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
+  // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
+  const deviceButton =
+    view === "collect" || view === "rom" ? (
+      <button
+        type="button"
+        className="secondary"
+        onClick={selectDevice}
+        disabled={!!busy || deviceReady}
+      >
+        <span className="material-icons">usb</span>
+        {t("chooseDevice")}
+      </button>
+    ) : null;
   const fallback = { label: busy || t("waiting") };
   const dark = theme ? theme === "dark" : systemDark;
   return (
