@@ -2,3 +2,4 @@
 node_modules
 dist
 worker/.wrangler
+public/request.zip

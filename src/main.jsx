@@ -580,66 +580,408 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   await socket.close();
 }
 
-async function feedProgress(size, onProgress) {
-  const steps = Math.max(4, Math.min(40, Math.round(size / (16 * 1024 * 1024))));
-  for (let i = 1; i <= steps; i += 1) {
-    await wait(60);
-    onProgress?.(i / steps);
+const BOOT_MAGIC = [0x41, 0x4e, 0x44, 0x52, 0x4f, 0x49, 0x44, 0x21];
+const SLOT_PARTITIONS = new Set([
+  "boot",
+  "init_boot",
+  "vendor_boot",
+  "dtbo",
+  "vbmeta",
+  "vbmeta_system",
+  "recovery",
+  "xbl",
+  "xbl_config",
+  "abl",
+  "aop",
+  "tz",
+  "hyp",
+  "modem",
+  "bluetooth",
+  "dsp",
+  "keymaster",
+  "devcfg",
+  "qupfw",
+  "uefisecapp",
+  "imagefv",
+  "shrm",
+  "multiimgoem",
+  "cpucp",
+  "qweslicstore",
+]);
+const BOOT_MAGIC_PARTITIONS = /^(boot|init_boot|recovery|vendor_boot)/;
+const LOGICAL_PARTITIONS = new Set([
+  "system",
+  "system_ext",
+  "vendor",
+  "product",
+  "odm",
+  "odm_dlkm",
+  "vendor_dlkm",
+  "system_dlkm",
+  "mi_ext",
+]);
+
+const SPARSE_MAGIC = 0xed26ff3a;
+
+function fingerprint(bytes) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 1) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 0x01000193) >>> 0;
   }
+  return hash.toString(16).padStart(8, "0");
 }
 
-function mockFastboot() {
+function sparseInfo(bytes) {
+  if (bytes.length < 28) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== SPARSE_MAGIC) return null;
+  const headerSize = view.getUint16(8, true);
+  const chunkHeader = view.getUint16(10, true);
+  const blockSize = view.getUint32(12, true);
+  const totalBlocks = view.getUint32(16, true);
+  const totalChunks = view.getUint32(20, true);
+  let at = headerSize;
+  let blocks = 0;
+  let written = 0;
+  for (let i = 0; i < totalChunks; i += 1) {
+    if (at + chunkHeader > bytes.length) return { error: "块头越界" };
+    const type = view.getUint16(at, true);
+    const chunkBlocks = view.getUint32(at + 4, true);
+    const size = view.getUint32(at + 8, true);
+    if (size < chunkHeader || at + size > bytes.length) return { error: "块越界" };
+    if (type === 0xcac1 || type === 0xcac2 || type === 0xcac3) {
+      blocks += chunkBlocks;
+      // Skip blocks leave their region untouched, so they cover the header's
+      // block count without writing anything.
+      if (type !== 0xcac3) written += chunkBlocks * blockSize;
+    }
+    at += size;
+  }
+  if (at !== bytes.length) return { error: "末尾有多余字节" };
+  if (blocks !== totalBlocks)
+    return { error: `块数不符 ${blocks} != ${totalBlocks}` };
+  return { expanded: written, sized: blocks * blockSize, chunks: totalChunks };
+}
+
+function mockBootloader() {
+  const responses = [];
+  const log = [];
+  let opened = false;
+  let pending = 0;
+  const payload = [];
+  let payloadSize = 0;
+  let slot = "a";
+  let rebooted = false;
+  const flashed = new Map();
+  const writes = [];
+  const erased = new Set();
+  const resized = new Map();
+
+  const reply = (text) => {
+    responses.push(new TextEncoder().encode(text));
+    log.push(text.split(/\s/)[0]);
+  };
+  const okay = (text = "") => reply(`OKAY${text}`);
+  const fail = (text) => reply(`FAIL${text}`);
+
+  const takePayload = () => {
+    const size = payloadSize;
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    for (const part of payload) {
+      bytes.set(part, at);
+      at += part.length;
+    }
+    payload.length = 0;
+    payloadSize = 0;
+    return bytes;
+  };
+
+  const getvar = (name) => {
+    switch (name) {
+      case "product":
+        return "odin";
+      case "current-slot":
+        return slot;
+      case "max-download-size":
+        return (256 * 1024 * 1024).toString(16);
+      case "version":
+        return "0.4";
+      case "serialno":
+        return "MOCK0DIN0000";
+      default:
+        if (name.startsWith("has-slot:"))
+          return SLOT_PARTITIONS.has(name.slice(9)) ? "yes" : "no";
+        if (name.startsWith("is-logical:"))
+          return LOGICAL_PARTITIONS.has(
+            name.slice(11).replace(/_(ab|[ab])$/, ""),
+          )
+            ? "yes"
+            : "no";
+        return "";
+    }
+  };
+
+  const command = (line) => {
+    const at = line.indexOf(":");
+    const verb = at < 0 ? line : line.slice(0, at);
+    const rest = at < 0 ? "" : line.slice(at + 1);
+    switch (verb) {
+      case "getvar":
+        okay(getvar(rest));
+        return;
+      case "download": {
+        const size = parseInt(rest, 16);
+        if (!Number.isFinite(size) || size <= 0) {
+          fail("Invalid download size");
+          return;
+        }
+        if (size > 512 * 1024 * 1024) {
+          fail("Data too large");
+          return;
+        }
+        pending = size;
+        reply(`DATA${size.toString(16).padStart(8, "0")}`);
+        return;
+      }
+      case "flash": {
+        if (payloadSize === 0) {
+          fail(`No payload for ${rest}`);
+          return;
+        }
+        const bytes = takePayload();
+        const sparse = sparseInfo(bytes);
+        if (sparse?.error) {
+          fail(`Malformed sparse image: ${sparse.error}`);
+          return;
+        }
+        if (!sparse && BOOT_MAGIC_PARTITIONS.test(rest)) {
+          const bad = BOOT_MAGIC.some((byte, i) => bytes[i] !== byte);
+          if (bad) {
+            fail(`Image is not a boot image`);
+            return;
+          }
+        }
+        const written = sparse?.expanded ?? bytes.length;
+        writes.push({
+          partition: rest,
+          bytes: bytes.length,
+          written,
+          sparse: !!sparse,
+          fingerprint: fingerprint(bytes),
+        });
+        flashed.set(rest, (flashed.get(rest) || 0) + written);
+        okay(`Flashing '${rest}'`);
+        return;
+      }
+      case "erase":
+        erased.add(rest);
+        okay(`Erasing '${rest}'`);
+        return;
+      case "resize-logical-partition": {
+        const [name, size] = rest.split(":");
+        if (!LOGICAL_PARTITIONS.has(name.replace(/_(ab|[ab])$/, ""))) {
+          fail(`Not a logical partition: ${name}`);
+          return;
+        }
+        resized.set(name, Number(size));
+        okay("");
+        return;
+      }
+      case "set_active":
+        if (rest !== "a" && rest !== "b") {
+          fail(`Invalid slot ${rest}`);
+          return;
+        }
+        slot = rest;
+        okay(`Setting current slot to '${rest}'`);
+        return;
+      case "boot": {
+        if (payloadSize === 0) {
+          fail("No kernel to boot");
+          return;
+        }
+        const bytes = takePayload();
+        if (!sparseInfo(bytes) && BOOT_MAGIC.some((byte, i) => bytes[i] !== byte)) {
+          fail("Image is not a boot image");
+          return;
+        }
+        okay("Booting");
+        return;
+      }
+      case "reboot":
+      case "reboot-bootloader":
+        rebooted = true;
+        okay("");
+        return;
+      default:
+        fail(`Unknown command ${verb}`);
+    }
+  };
+
+  const usb = {
+    opened: false,
+    deviceClass: 0xff,
+    deviceSubclass: 0x42,
+    deviceProtocol: 0x03,
+    vendorId: 0x18d1,
+    productId: 0xd00d,
+    serialNumber: "MOCK0DIN0000",
+    configurations: [
+      {
+        configurationValue: 1,
+        interfaces: [
+          {
+            interfaceNumber: 0,
+            claimed: false,
+            alternates: [
+              {
+                alternateSetting: 0,
+                interfaceClass: 0xff,
+                endpoints: [
+                  { type: "bulk", direction: "in", endpointNumber: 1 },
+                  { type: "bulk", direction: "out", endpointNumber: 2 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    async open() {
+      opened = true;
+      this.opened = true;
+    },
+    async close() {
+      opened = false;
+      this.opened = false;
+    },
+    async reset() {},
+    async selectConfiguration() {},
+    async claimInterface() {
+      this.configurations[0].interfaces[0].claimed = true;
+    },
+    async releaseInterface() {},
+    async transferOut(endpoint, data) {
+      // The library hands commands as Uint8Array views but payload chunks as
+      // ArrayBuffers, so read the length that the value actually has.
+      const bytes = ArrayBuffer.isView(data)
+        ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        : new Uint8Array(data);
+      if (pending > 0) {
+        const take = Math.min(bytes.length, pending);
+        payload.push(bytes.slice(0, take));
+        payloadSize += take;
+        pending -= take;
+        if (take && payloadSize % (4 * 1024 * 1024) < take) await wait(1);
+        if (pending === 0) okay("");
+        return { bytesWritten: take, status: "ok" };
+      }
+      command(new TextDecoder().decode(bytes));
+      return { bytesWritten: bytes.length, status: "ok" };
+    },
+    async transferIn() {
+      while (!responses.length) await wait(4);
+      const bytes = responses.shift();
+      return { data: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), status: "ok" };
+    },
+  };
+
   return {
-    mock: true,
-    async connect() {
-      await wait(350);
+    usb,
+    get flashed() {
+      return flashed;
     },
-    async getVariable(name) {
-      await wait(120);
-      return name === "product" ? "odin" : "";
+    get erased() {
+      return erased;
     },
-    async runCommand() {
-      await wait(350);
-      return { text: "" };
+    get writes() {
+      return writes;
     },
-    async flashBlob(partition, blob, onProgress) {
-      await feedProgress(blob.size, onProgress);
+    get resized() {
+      return resized;
     },
-    async bootBlob(blob, onProgress) {
-      await feedProgress(blob.size, onProgress);
+    get slot() {
+      return slot;
+    },
+    get rebooted() {
+      return rebooted;
+    },
+    get commands() {
+      return log;
     },
   };
 }
 
+async function connectMockFastboot() {
+  const bootloader = mockBootloader();
+  const fastboot = new FastbootDevice();
+  if (typeof fastboot._validateAndConnectDevice !== "function")
+    throw Error("android-fastboot 的内部接口变了，Mock 设备无法接管连接");
+  fastboot.device = bootloader.usb;
+  await fastboot._validateAndConnectDevice();
+  // 便于在控制台检查这台模拟设备的状态
+  if (typeof globalThis !== "undefined") globalThis.__mockBootloader = bootloader;
+  return { fastboot, bootloader };
+}
+
 function mockSideloadSocket(total) {
-  const count = Math.ceil(total / BLOCK);
   const encoder = new TextEncoder();
+  const count = Math.ceil(total / BLOCK);
   let next = 0;
+  let received = 0;
+  let head = null;
+  let verdict = "";
   return {
     readable: new ReadableStream({
       async pull(controller) {
-        await wait(8);
-        controller.enqueue(
-          encoder.encode(
-            next < count ? String(next++).padStart(8, "0") : "DONEDONE",
-          ),
-        );
+        if (next < count) {
+          controller.enqueue(encoder.encode(String(next++).padStart(8, "0")));
+          return;
+        }
+        if (!verdict) {
+          verdict =
+            received === total && head === "PK"
+              ? "DONEDONE"
+              : `FAILFAIL:${received}/${total}`;
+        }
+        await wait(4);
+        controller.enqueue(encoder.encode(verdict.slice(0, 8)));
       },
     }),
-    writable: new WritableStream({ write() {} }),
+    writable: new WritableStream({
+      write(chunk) {
+        if (received === 0) head = String.fromCharCode(chunk[0], chunk[1]);
+        received += chunk.length;
+      },
+    }),
     async close() {},
   };
 }
 
+async function mockCollectorOutput() {
+  const local = await fetch("/request.zip")
+    .then((r) => (r.ok ? r.blob() : null))
+    .catch(() => null);
+  if (local) return local;
+  return new Blob([new TextEncoder().encode("mock authorization request")]);
+}
+
 function mockAdb() {
+  const written = [];
   return {
     mock: true,
-    serial: "mock-device",
+    serial: "MOCK0DIN0000",
     banner: { state: "recovery" },
+    written,
     async sync() {
       return {
-        async write({ file }) {
+        async write({ filename, file }) {
+          const size = file ? new Blob([file]).size : 0;
+          written.push({ filename, size });
           if (file) await new Response(file).arrayBuffer();
+          await wait(400);
         },
         async dispose() {},
       };
@@ -647,8 +989,8 @@ function mockAdb() {
     subprocess: {
       noneProtocol: {
         async spawn() {
-          await wait(400);
-          return { output: new Blob([new Uint8Array(64)]).stream() };
+          await wait(600);
+          return { output: (await mockCollectorOutput()).stream() };
         },
       },
     },
@@ -658,7 +1000,8 @@ function mockAdb() {
       },
     },
     async createSocket(service) {
-      return mockSideloadSocket(Number(service.split(":")[1]) || 0);
+      const chunks = String(service).split(":");
+      return mockSideloadSocket(Number(chunks[1]) || 0);
     },
   };
 }
@@ -829,9 +1172,11 @@ function App() {
   const connect = async () => {
     setBusy(t("busyConnectFastboot"));
     try {
-      const device = mockMode ? mockFastboot() : new FastbootDevice();
+      const device = mockMode
+        ? (await connectMockFastboot()).fastboot
+        : new FastbootDevice();
       await run("fastboot usb connect", () =>
-        device.connect().catch((e) => {
+        (mockMode ? Promise.resolve() : device.connect()).catch((e) => {
           throw new AppError("noFastbootDevice", undefined, e);
         }),
       );
