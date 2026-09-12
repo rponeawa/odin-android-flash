@@ -469,6 +469,13 @@ async function issueAuthorization(request, onProgress, gate) {
   return { blob, name: result.filename || "authorization.zip" };
 }
 
+// 前几个字节，用来判断送出去的到底是不是预期的包
+async function headHex(source) {
+  if (!(source instanceof Blob)) return "?";
+  const bytes = new Uint8Array(await source.slice(0, 8).arrayBuffer());
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+}
+
 async function sendSideload(adb, source, onProgress, total, gate) {
   let socket;
   try {
@@ -505,7 +512,12 @@ async function sendSideload(adb, source, onProgress, total, gate) {
     await gate?.wait();
     const cmd = new TextDecoder().decode(await readExact(8));
     if (cmd === "DONEDONE") break;
-    if (cmd === "FAILFAIL") throw new AppError("sideloadReject", { sent, total });
+    if (cmd === "FAILFAIL")
+      throw new AppError("sideloadReject", {
+        sent,
+        total,
+        head: await headHex(source),
+      });
     const block = Number(cmd);
     if (!Number.isInteger(block)) throw new AppError("sideloadBadBlock", { cmd });
     const offset = block * BLOCK;
