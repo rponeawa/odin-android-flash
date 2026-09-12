@@ -1587,6 +1587,8 @@ function App() {
   const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
   // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
   // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
+  // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作
+  const blocked = !!busy || !deviceReady;
   const deviceButton =
     view === "collect" || view === "rom" ? (
       <button
@@ -1720,7 +1722,7 @@ function App() {
           <Page title={t("connectTitle")} icon="usb">
             <p>{t("connectText")}</p>
             <Panel>
-              <Actions onClick={connect} disabled={!!busy}>
+              <Actions onClick={connect} disabled={blocked}>
                 {busy || t("connectAction")}
               </Actions>
               <label className="mode-choice">
@@ -1728,7 +1730,7 @@ function App() {
                   type="checkbox"
                   checked={mockMode}
                   onChange={(event) => setMockMode(event.target.checked)}
-                  disabled={!!busy}
+                  disabled={blocked}
                 />
                 {t("mockMode")}
               </label>
@@ -1744,7 +1746,7 @@ function App() {
                 accept=".tgz,.gz,application/gzip"
                 file={baseFile}
                 onPick={setBaseFile}
-                disabled={!!busy}
+                disabled={blocked}
                 label={t("pickBase")}
               />
               <Actions
@@ -1756,7 +1758,7 @@ function App() {
                       type="button"
                       className="secondary"
                       onClick={skipBase}
-                      disabled={!!busy}
+                      disabled={blocked}
                     >
                       <span className="material-icons">skip_next</span>
                       {t("skip")}
@@ -1764,7 +1766,7 @@ function App() {
                   </>
                 }
                 onClick={flashBase}
-                disabled={!deviceReady || !!busy}
+                disabled={blocked}
               >
                 {busy ||
                   (baseFile
@@ -1782,7 +1784,7 @@ function App() {
                 accept=".img"
                 file={twrpFile}
                 onPick={setTwrpFile}
-                disabled={!!busy}
+                disabled={blocked}
                 label={t("pickTwrp")}
               />
               <Actions
@@ -1793,7 +1795,7 @@ function App() {
                   </>
                 }
                 onClick={bootTwrp}
-                disabled={!deviceReady || !!busy}
+                disabled={blocked}
               >
                 {busy ||
                   (twrpFile
@@ -1816,7 +1818,7 @@ function App() {
                   </>
                 }
                 onClick={collect}
-                disabled={!deviceReady || !!busy}
+                disabled={blocked}
               >
                 {busy || t("collectAction")}
               </Actions>
@@ -1836,7 +1838,7 @@ function App() {
                   </>
                 }
                 onClick={flashAuthorization}
-                disabled={!deviceReady || !issued || !!busy}
+                disabled={blocked || !issued}
               >
                 {busy || t("authFlashAction")}
               </Actions>
@@ -1851,7 +1853,7 @@ function App() {
               <Select
                 value={rom?.id ? String(rom.id) : ""}
                 placeholder={t("selectVersion")}
-                disabled={!deviceReady || !!busy}
+                disabled={blocked}
                 options={releases.map((x) => ({
                   value: String(x.id),
                   label: x.name,
@@ -1865,7 +1867,7 @@ function App() {
                 accept=".zip"
                 file={romFile}
                 onPick={setRomFile}
-                disabled={!!busy}
+                disabled={blocked}
                 label={t("pickRom")}
               />
               <Actions
@@ -1876,7 +1878,7 @@ function App() {
                   </>
                 }
                 onClick={flash}
-                disabled={!deviceReady || (!rom && !romFile) || !!busy}
+                disabled={blocked || (!rom && !romFile)}
               >
                 {busy ||
                   (romFile
