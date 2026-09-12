@@ -1905,6 +1905,30 @@ function App() {
             </pre>
           </section>
         )}
+        {mode && (
+          <div className="step-nav">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setStep((current) => Math.max(0, current - 1))}
+              disabled={step === 0 || !!busy}
+            >
+              <span className="material-icons">arrow_back</span>
+              {t("prev")}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                setStep((current) => Math.min(flow.length - 1, current + 1))
+              }
+              disabled={step === flow.length - 1 || !!busy}
+            >
+              {t("next")}
+              <span className="material-icons">arrow_forward</span>
+            </button>
+          </div>
+        )}
       </main>
     </>
   );
