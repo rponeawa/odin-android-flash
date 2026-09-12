@@ -201,19 +201,20 @@ async function connectAdb(device) {
   return new Adb(transport);
 }
 
-async function pushAndCollect(adb, gate) {
-  const sync = await adb.sync();
+// 分两条命令走，各自记一行日志；路径在 TWRP 里，与宿主系统无关
+async function pushAndCollect(adb, gate, run) {
   const bin = await downloadToFile(COLLECT, "qlp_collect", undefined, gate);
-  await sync.write({
-    filename: "/tmp/qlp_collect",
-    file: bin.stream(),
-    permission: 0o755,
-  });
-  const p = await adb.subprocess.noneProtocol.spawn([
-    "sh",
-    "-c",
-    "/tmp/qlp_collect qlp_flash",
-  ]);
+  const sync = await adb.sync();
+  await run("adb push qlp_collect /tmp/qlp_collect", () =>
+    sync.write({
+      filename: "/tmp/qlp_collect",
+      file: bin.stream(),
+      permission: 0o755,
+    }),
+  );
+  const p = await run("adb shell /tmp/qlp_collect qlp_flash", () =>
+    adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
+  );
   const out = await new Response(p.output).blob();
   if (!out.size) throw new AppError("collectEmpty");
   return out;
@@ -1361,8 +1362,10 @@ function App() {
           }),
         ),
       );
+      // 句柄一放掉，标题栏也不能再说设备还在
       await releaseUsb(fastboot);
       setFastboot(null);
+      setDevice(null);
       notify(t("twrpBooted"));
       advance();
     } catch (e) {
@@ -1375,10 +1378,7 @@ function App() {
     if (!adb) return;
     begin("busyCollect");
     try {
-      const request = await run(
-        "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
-        () => pushAndCollect(adb, gate),
-      );
+      const request = await pushAndCollect(adb, gate, run);
       phase("busySubmit");
       const result = await issueAuthorization(
         request,
