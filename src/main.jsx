@@ -24,13 +24,9 @@ const GROUP = "https://qm.qq.com/q/LslPTWDqo0";
 const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
-// 每个 HTTP 请求取回的字节数。远大于消费粒度，用来摊掉每次请求的往返延迟：
-// 64 MiB 时约七成时间用在传输上，再大则收益递减而失败重下的代价翻倍。
-const CHUNK = 64 * 1024 * 1024;
 const STALL = 30000;
 // sideload 块大小。取值同 AOSP adb 的 SIDELOAD_HOST_BLOCK_SIZE (adb.h: CHUNK_SIZE)。
 const BLOCK = 64 * 1024;
-const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 const FLOWS = {
   full: ["connect", "base", "twrp", "collect", "auth", "rom", "done"],
@@ -143,7 +139,7 @@ async function connectAdb() {
 
 async function pushAndCollect(adb, gate) {
   const sync = await adb.sync();
-  const bin = await downloadBlob(COLLECT, undefined, gate);
+  const bin = await downloadToFile(COLLECT, "qlp_collect", undefined, gate);
   await sync.write({
     filename: "/tmp/qlp_collect",
     file: bin.stream(),
@@ -159,156 +155,75 @@ async function pushAndCollect(adb, gate) {
   return out;
 }
 
-async function downloadBlob(url, onProgress, gate) {
-  const probe = await probeSize(url).catch(() => ({ total: 0, ranged: false }));
-  if (probe.ranged && probe.total) {
-    const reader = rangedStream(url, probe.total, onProgress, gate).getReader();
-    const parts = [];
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      parts.push(part.value);
-    }
-    return new Blob(parts);
-  }
-  const response = await fetch(proxied(url));
-  if (!response.ok) throw new AppError("downloadFailed", { status: response.status });
-  if (!response.body) return response.blob();
-  const reader = response.body.getReader();
-  const chunks = [];
-  let done = 0;
-  const started = performance.now();
-  while (true) {
-    await gate?.wait();
-    const part = await reader.read();
-    if (part.done) break;
-    chunks.push(part.value);
-    done += part.value.length;
-    const elapsed = performance.now() - started - (gate?.pausedMs || 0);
-    onProgress?.(done, probe.total, done / Math.max(0.001, elapsed / 1000));
-  }
-  return new Blob(chunks);
+async function opfsRoot() {
+  if (!navigator.storage?.getDirectory) throw new AppError("noOpfs");
+  return navigator.storage.getDirectory();
 }
 
-async function probeSize(url) {
-  const response = await fetch(proxied(url), { headers: { Range: "bytes=0-0" } });
-  if (!response.ok && response.status !== 206)
-    throw new AppError("sizeFailed", { status: response.status });
-  await response.body?.cancel();
-  const range = response.headers.get("content-range");
-  const ranged = response.status === 206 && !!range;
-  const total = ranged
-    ? Number(range.split("/").pop()) || 0
-    : Number(response.headers.get("content-length")) || 0;
-  return { total, ranged };
-}
-
-async function fetchRange(url, from, to) {
-  const wanted = to - from + 1;
-  for (let retry = 0; ; retry += 1) {
-    const ctl = new AbortController();
-    let timer;
-    const arm = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => ctl.abort(), STALL);
-    };
+async function clearStorage() {
+  const root = await opfsRoot();
+  for await (const name of root.keys()) {
     try {
-      arm();
-      const response = await fetch(proxied(url), {
-        headers: { Range: `bytes=${from}-${to}` },
-        signal: ctl.signal,
-      });
+      await root.removeEntry(name);
+    } catch (e) {
+      /* 已被移除 */
+    }
+  }
+}
+
+// 唯一的下载路径。流式写进 OPFS，中断时按已写入的字节数接着下。
+// 返回 File，它本身就是 Blob，可以直接交给 fastboot 和 sideload。
+async function downloadToFile(url, name, onProgress, gate) {
+  const root = await opfsRoot();
+  const handle = await root.getFileHandle(name, { create: true });
+  const started = performance.now();
+  let written = 0;
+  let total = 0;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(
+        proxied(url),
+        written > 0 ? { headers: { Range: `bytes=${written}-` } } : undefined,
+      );
       if (!response.ok && response.status !== 206)
         throw new AppError("downloadFailed", { status: response.status });
-      if (
-        response.status === 200 &&
-        Number(response.headers.get("content-length")) > wanted
-      )
-        throw new AppError("rangeIgnored");
-      if (!response.body) return new Uint8Array(await response.arrayBuffer());
+      if (!response.body) throw new AppError("downloadFailed", { status: 404 });
+      if (written > 0 && response.status !== 206) written = 0;
+      total = written + (Number(response.headers.get("content-length")) || 0);
+      const writable = await handle.createWritable({
+        keepExistingData: written > 0,
+      });
+      if (written) await writable.seek(written);
       const reader = response.body.getReader();
-      const parts = [];
-      let size = 0;
-      while (true) {
+      let timer;
+      const arm = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => reader.cancel(), STALL);
+      };
+      try {
         arm();
-        const part = await reader.read();
-        if (part.done) break;
-        parts.push(part.value);
-        size += part.value.length;
+        while (true) {
+          await gate?.wait();
+          const part = await reader.read();
+          if (part.done) break;
+          await writable.write(part.value);
+          written += part.value.length;
+          arm();
+          const elapsed = performance.now() - started - (gate?.pausedMs || 0);
+          onProgress?.(written, total, written / Math.max(0.001, elapsed / 1000));
+        }
+      } finally {
+        clearTimeout(timer);
+        await writable.close();
       }
-      if (!size) throw new AppError("downloadFailed", { status: response.status });
-      const joined = new Uint8Array(size);
-      let at = 0;
-      for (const part of parts) {
-        joined.set(part, at);
-        at += part.length;
-      }
-      return joined;
+      if (total > 0 && written >= total) return await handle.getFile();
+      lastError = new AppError("downloadFailed", { status: 200 });
     } catch (e) {
-      const failure = ctl.signal.aborted
-        ? new AppError("stalled", { seconds: STALL / 1000 })
-        : e;
-      if (retry === 2) throw failure;
-    } finally {
-      clearTimeout(timer);
+      lastError = e;
     }
   }
-}
-
-function windowed(readAt, total) {
-  let start = 0;
-  let buffer = new Uint8Array(0);
-  return async (offset, len) => {
-    if (offset < start || offset + len > start + buffer.length) {
-      const end = Math.min(total - 1, offset + CHUNK - 1);
-      buffer = await readAt(offset, end - offset + 1);
-      start = offset;
-      if (buffer.length < len)
-        throw new AppError("downloadFailed", { status: 206 });
-    }
-    return buffer.subarray(offset - start, offset - start + len);
-  };
-}
-
-function rangedStream(url, total, onProgress, gate) {
-  let start = 0;
-  const started = performance.now();
-  return new ReadableStream({
-    async pull(controller) {
-      await gate?.wait();
-      if (start >= total) {
-        controller.close();
-        return;
-      }
-      const end = Math.min(total - 1, start + CHUNK - 1);
-      const chunk = await fetchRange(url, start, end);
-      controller.enqueue(chunk);
-      start += chunk.length;
-      const elapsed = performance.now() - started - (gate?.pausedMs || 0);
-      onProgress?.(start, total, start / Math.max(0.001, elapsed / 1000));
-    },
-  });
-}
-
-function blobStream(blob, onProgress, gate) {
-  const reader = blob.stream().getReader();
-  let done = 0;
-  const started = performance.now();
-  return new ReadableStream({
-    async pull(controller) {
-      await gate?.wait();
-      const part = await reader.read();
-      if (part.done) {
-        controller.close();
-        return;
-      }
-      done += part.value.length;
-      const elapsed = performance.now() - started - (gate?.pausedMs || 0);
-      onProgress?.(done, blob.size, done / Math.max(0.001, elapsed / 1000));
-      controller.enqueue(part.value);
-    },
-    cancel: () => reader.cancel(),
-  });
+  throw lastError;
 }
 
 function byteReader(stream) {
@@ -352,27 +267,6 @@ function byteReader(stream) {
   };
 }
 
-function blobSink() {
-  const parts = [];
-  let buffered = [];
-  let held = 0;
-  return {
-    write(chunk) {
-      buffered.push(chunk);
-      held += chunk.length;
-      if (held >= PART) {
-        parts.push(new Blob(buffered));
-        buffered = [];
-        held = 0;
-      }
-    },
-    end() {
-      if (held) parts.push(new Blob(buffered));
-      return new Blob(parts);
-    },
-  };
-}
-
 async function extractTarStream(stream, onEntry) {
   const src = byteReader(stream);
   while (await src.fill(512)) {
@@ -387,7 +281,7 @@ async function extractTarStream(stream, onEntry) {
     while (left > 0) {
       if (!(await src.fill(1))) throw new AppError("baseTruncated", { name });
       const chunk = src.take(Math.min(left, src.size));
-      sink?.write(chunk);
+      await sink?.write(chunk);
       left -= chunk.length;
     }
     if (padding) {
@@ -399,28 +293,45 @@ async function extractTarStream(stream, onEntry) {
   await src.cancel();
 }
 
-async function basePackageStream(source, onProgress, gate) {
-  if (source instanceof Blob) return blobStream(source, onProgress, gate);
-  const { total, ranged } = await probeSize(source);
-  if (!total) throw new AppError("baseSizeFailed");
-  if (!ranged) throw new AppError("baseNoRange");
-  return rangedStream(source, total, onProgress, gate);
-}
-
-async function collectBasePackage(source, onDownload, gate) {
-  const stream = (await basePackageStream(source, onDownload, gate)).pipeThrough(
-    new DecompressionStream("gzip"),
-  );
+// 把底包解压到 OPFS：镜像落盘，flash_all.sh 留在内存里。
+// 返回完整名到 FileHandle 的映射和脚本内容，之后按脚本刷写。
+async function extractBasePackage(file, onProgress) {
+  const root = await opfsRoot();
   const files = new Map();
-  await extractTarStream(stream, (name, size) => {
+  let scriptName = "";
+  let scriptText = "";
+  let written = 0;
+  const stream = file
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  await extractTarStream(stream, async (name, size) => {
     if (!size || name.endsWith("/")) return null;
-    const sink = blobSink();
+    if (name === SCRIPT || name.endsWith(`/${SCRIPT}`)) {
+      scriptName = name;
+      const parts = [];
+      return {
+        write: (chunk) => parts.push(chunk),
+        end: async () => {
+          scriptText = await new Blob(parts).text();
+        },
+      };
+    }
+    const handle = await root.getFileHandle(name.replace(/\//g, "_"), {
+      create: true,
+    });
+    const writable = await handle.createWritable();
+    files.set(name, handle);
     return {
-      write: sink.write,
-      end: () => files.set(name, sink.end()),
+      write: async (chunk) => {
+        await writable.write(chunk);
+        written += chunk.length;
+        onProgress?.(written);
+      },
+      end: () => writable.close(),
     };
   });
-  return files;
+  if (!scriptName) throw new AppError("baseNoScript", { script: SCRIPT });
+  return { files, scriptName, scriptText };
 }
 
 function parseFlashScript(script) {
@@ -467,23 +378,13 @@ function parseFlashScript(script) {
   return steps;
 }
 
-function packageRoot(files) {
-  let root = null;
-  for (const name of files.keys()) {
-    if (name !== SCRIPT && !name.endsWith(`/${SCRIPT}`)) continue;
-    const candidate = name.slice(0, name.length - SCRIPT.length);
-    if (root === null || candidate.length < root.length) root = candidate;
-  }
-  return root;
-}
-
 async function runFlashScript(fastboot, resolve, steps, onFlash, run) {
   let index = 0;
   for (const step of steps) {
     index += 1;
     const label = `${index}/${steps.length}`;
     if (step.verb === "flash") {
-      const image = resolve(step.file);
+      const image = await resolve(step.file);
       if (!image) throw new AppError("baseMissingFile", { file: step.file });
       await run(`fastboot flash ${step.partition} ${step.file}`, () =>
         fastboot.flashBlob(step.partition, image, (p) =>
@@ -538,9 +439,11 @@ async function issueAuthorization(request, onProgress, gate) {
     };
     xhr.send(fd);
   });
-  const blob = await downloadBlob(
+  const blob = await downloadToFile(
     result.download,
-    (done, total, speed) => onProgress?.(t("progDownloadAuth"), done, total, speed),
+    "authorization.zip",
+    (done, total, speed) =>
+      onProgress?.(t("progDownloadAuth"), done, total, speed),
     gate,
   );
   return { blob, name: result.filename || "authorization.zip" };
@@ -1220,21 +1123,32 @@ function App() {
     const label = baseFile ? t("busyReadLocalBase") : t("busyDownloadBase");
     begin(label);
     try {
-      const files = await collectBasePackage(
-        baseFile || BASE,
-        (done, total, speed) => setProgress({ label, done, total, speed }),
-        gate,
+      await clearStorage();
+      const archive =
+        baseFile ||
+        (await downloadToFile(BASE, "base.tgz", (done, total, speed) =>
+          setProgress({ label, done, total, speed }),
+        gate));
+      setBusy(t("busyUnpackBase"));
+      const { files, scriptName, scriptText } = await extractBasePackage(
+        archive,
+        (done) => setProgress({ label: t("busyUnpackBase"), done }),
       );
-      const root = packageRoot(files);
-      if (root === null) throw new AppError("baseNoScript", { script: SCRIPT });
-      const resolve = (file) => files.get(root + file);
-      const steps = parseFlashScript(await resolve(SCRIPT).text());
+      const root = scriptName.slice(0, scriptName.length - SCRIPT.length);
+      const resolve = async (file) => {
+        if (file === SCRIPT) return scriptText;
+        const handle = files.get(root + file);
+        if (!handle) throw new AppError("baseMissingFile", { file });
+        return handle.getFile();
+      };
+      const steps = parseFlashScript(scriptText);
       if (!steps.length) throw new AppError("baseNoCommands", { script: SCRIPT });
       setBusy(t("busyFlashBase"));
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
       await runFlashScript(fastboot, resolve, steps, onFlash, run);
       notify(t("baseFlashed", { script: SCRIPT, count: steps.length }));
+      await clearStorage();
       advance();
     } catch (e) {
       showError(e);
@@ -1252,8 +1166,9 @@ function App() {
     try {
       const blob =
         twrpFile ||
-        (await downloadBlob(
+        (await downloadToFile(
           TWRP,
+          "twrp.img",
           (done, total, speed) =>
             setProgress({ label: t("progDownloadTwrp"), done, total, speed }),
           gate,
@@ -1357,6 +1272,7 @@ function App() {
           ),
         );
         await reboot(device);
+        await clearStorage();
         advance();
         notify(t("romFlashed"));
         return;
@@ -1368,56 +1284,32 @@ function App() {
         );
       const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
       let downloaded = 0;
-      const started = performance.now();
-      const source = async (offset, len) => {
-        const out = new Uint8Array(len);
-        let filled = 0;
-        while (filled < len) {
-          const want = offset + filled;
-          let base = 0;
-          let part = null;
-          let local = 0;
-          for (const a of assets) {
-            const size = Number(a.size || 0);
-            if (want < base + size) {
-              part = a;
-              local = want - base;
-              break;
-            }
-            base += size;
-          }
-          if (!part) throw new AppError("romOffset");
-          const take = Math.min(len - filled, Number(part.size || 0) - local);
-          const data = await fetchRange(
-            part.browser_download_url,
-            local,
-            local + take - 1,
-          );
-          out.set(data, filled);
-          filled += data.length;
-        }
-        downloaded = Math.max(downloaded, offset + filled);
-        const seconds = Math.max(0.001, (performance.now() - started) / 1000);
-        setProgress({
-          label: t("progFlashRom"),
-          done: downloaded,
-          total,
-          speed: downloaded / seconds,
-        });
-        return out;
-      };
-      await run("adb sideload release parts", () =>
-        asSideload(() =>
-          sendSideload(
-            device,
-            windowed(source, total),
-            () => {},
-            total,
+      const parts = [];
+      for (const asset of assets) {
+        const base = downloaded;
+        parts.push(
+          await downloadToFile(
+            asset.browser_download_url,
+            asset.name,
+            (done, partTotal, speed) =>
+              setProgress({
+                label: t("progDownloadRom"),
+                done: base + done,
+                total,
+                speed,
+              }),
             gate,
           ),
-        ),
+        );
+        downloaded += Number(asset.size || 0);
+      }
+      // File 也是 Blob，跨分卷的切片的由浏览器处理，不必自己拼接
+      const source = new Blob(parts);
+      await run("adb sideload release parts", () =>
+        asSideload(() => sendSideload(device, source, () => {}, total, gate)),
       );
       await reboot(device);
+      await clearStorage();
       advance();
       notify(t("romFlashed"));
     } catch (e) {
@@ -1428,6 +1320,7 @@ function App() {
   };
   const advance = () => setStep((current) => current + 1);
   const restart = () => {
+    clearStorage().catch(() => {});
     setLeaving(false);
     setMode(null);
     gate.reset();

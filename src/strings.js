@@ -69,6 +69,7 @@ const ZH = {
 
   busyConnectFastboot: "连接 Fastboot",
   busyDownloadBase: "下载官方底包",
+  busyUnpackBase: "解压底包",
   busyReadLocalBase: "读取本地底包",
   busyFlashBase: "刷入官方底包",
   busyBootTwrp: "启动 TWRP",
@@ -82,8 +83,8 @@ const ZH = {
   progUploadTwrp: "上传 TWRP",
   progUploadRequest: "上传授权请求",
   progDownloadAuth: "下载授权包",
+  progDownloadRom: "下载 ROM",
   progFlashAuth: "刷入授权包",
-  progFlashRom: "下载并刷入 ROM",
   progFlash: "刷入 {partition} {index}",
   progErase: "擦除 {partition} {index}",
   progSlot: "切换槽位 {slot} {index}",
@@ -98,6 +99,7 @@ const ZH = {
   logError: "错误 {detail}",
 
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
+  noOpfs: "当前浏览器不支持本地暂存，无法处理大文件。请使用 Chrome 或 Edge",
   noFastbootDevice:
     "没有找到 Fastboot 设备。请让手机进入 Fastboot 后用数据线连接，并在弹出的窗口中选择设备",
   noAdbDeviceMode:
@@ -106,11 +108,6 @@ const ZH = {
     "设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload，滑动确认后重试",
   releasesFailed: "无法读取版本列表 HTTP {status}",
   downloadFailed: "下载失败 HTTP {status}",
-  sizeFailed: "无法读取文件大小 HTTP {status}",
-  rangeIgnored: "源站忽略了 Range 请求，无法分段下载",
-  stalled: "连接停顿超过 {seconds} 秒",
-  baseSizeFailed: "无法读取官方底包大小",
-  baseNoRange: "官方底包源站不支持分段下载",
   baseTruncated: "底包数据在 {name} 处中断",
   baseMissingFile: "底包缺少 {file}",
   baseNoScript: "官方底包中没有 {script}",
@@ -124,7 +121,6 @@ const ZH = {
   sideloadReject: "TWRP 拒绝 ROM",
   sideloadBadBlock: "sideload 返回无效块号 {cmd}",
   sideloadRange: "sideload 请求超出文件范围",
-  romOffset: "ROM 偏移超出分卷范围",
 };
 
 const EN = {
@@ -198,6 +194,7 @@ const EN = {
 
   busyConnectFastboot: "Connecting Fastboot",
   busyDownloadBase: "Downloading firmware",
+  busyUnpackBase: "Unpacking firmware",
   busyReadLocalBase: "Reading local firmware",
   busyFlashBase: "Flashing firmware",
   busyBootTwrp: "Booting TWRP",
@@ -211,8 +208,8 @@ const EN = {
   progUploadTwrp: "Uploading TWRP",
   progUploadRequest: "Uploading request",
   progDownloadAuth: "Downloading authorization",
+  progDownloadRom: "Downloading the ROM",
   progFlashAuth: "Flashing authorization",
-  progFlashRom: "Downloading and flashing ROM",
   progFlash: "Flashing {partition} {index}",
   progErase: "Erasing {partition} {index}",
   progSlot: "Setting slot {slot} {index}",
@@ -227,6 +224,7 @@ const EN = {
   logError: "error {detail}",
 
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
+  noOpfs: "This browser cannot stage files locally, so large packages cannot be handled. Use Chrome or Edge.",
   noFastbootDevice:
     "No Fastboot device found. Put the phone in Fastboot, connect it by cable and pick it in the dialog.",
   noAdbDeviceMode:
@@ -235,11 +233,6 @@ const EN = {
     "The device is not in ADB Sideload. In TWRP choose Advanced - ADB Sideload, swipe to confirm and try again.",
   releasesFailed: "Could not read the release list, HTTP {status}",
   downloadFailed: "Download failed, HTTP {status}",
-  sizeFailed: "Could not read the file size, HTTP {status}",
-  rangeIgnored: "The origin ignored the Range request, so it cannot be split",
-  stalled: "The connection stalled for more than {seconds} seconds",
-  baseSizeFailed: "Could not read the firmware size",
-  baseNoRange: "The firmware origin does not serve ranges",
   baseTruncated: "The firmware data stops at {name}",
   baseMissingFile: "The firmware has no {file}",
   baseNoScript: "The firmware has no {script}",
@@ -253,7 +246,6 @@ const EN = {
   sideloadReject: "TWRP rejected the package",
   sideloadBadBlock: "Sideload returned an invalid block number {cmd}",
   sideloadRange: "Sideload asked for data past the end of the file",
-  romOffset: "The ROM offset falls outside the parts",
 };
 
 const TABLE = { zh: ZH, en: EN };
