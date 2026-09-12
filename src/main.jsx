@@ -908,6 +908,13 @@ function mockSideloadSocket(total) {
           return;
         }
         if (!verdict) {
+          // 块号发完之后，最后一块可能还在路上：ReadableStream 会在消费者
+          // 读走一个块号后立刻补充队列，判定得等字节数不再增长再下。
+          let last = -1;
+          for (let i = 0; i < 50 && received !== last; i += 1) {
+            last = received;
+            await wait(10);
+          }
           // sideload-host 只搬字节，不校验包内容；是不是合法 zip 由之后
           // 的安装器判断，模拟器不代劳，只在控制台提示。
           const ok = received === total;
