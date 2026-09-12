@@ -213,16 +213,22 @@ async function pushAndCollect(adb, gate, run) {
       permission: 0o755,
     }),
   );
+  // push 时带的 permission 在设备上没生效，显式补一次执行位
+  await run("adb shell chmod 755 /tmp/qlp_collect", () =>
+    adb.subprocess.noneProtocol.spawnWait(["chmod", "755", "/tmp/qlp_collect"]),
+  );
   // 采集程序把包写到手机上的文件，然后把那个路径打到 stdout
   const proc = await run(
     "adb shell /tmp/qlp_collect qlp_flash",
     () =>
       adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
   );
-  const where = (await new Response(proc.output).text()).trim();
-  if (!where) throw new AppError("collectEmpty");
-  const out = await run(`adb pull ${where}`, () =>
-    new Response(sync.read(where)).blob(),
+  const said = (await new Response(proc.output).text()).trim();
+  // 程序没跑起来时 stdout 是 shell 的报错，别把它当成路径去拉
+  if (!said.startsWith("/"))
+    throw new AppError("collectorFailed", { text: said });
+  const out = await run(`adb pull ${said}`, () =>
+    new Response(sync.read(said)).blob(),
   );
   if (!out.size) throw new AppError("collectEmpty");
   return out;
