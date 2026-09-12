@@ -24,8 +24,9 @@ const GROUP = "https://qm.qq.com/q/LslPTWDqo0";
 const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
-const RANGE = 32 * 1024 * 1024;
-const WINDOW = 64 * 1024 * 1024;
+// 每个 HTTP 请求取回的字节数。远大于消费粒度，用来摊掉每次请求的往返延迟：
+// 64 MiB 时约七成时间用在传输上，再大则收益递减而失败重下的代价翻倍。
+const CHUNK = 64 * 1024 * 1024;
 const STALL = 30000;
 const BLOCK = 262144;
 const PART = 32 * 1024 * 1024;
@@ -253,12 +254,12 @@ async function fetchRange(url, from, to) {
   }
 }
 
-function windowed(readAt, total, size) {
+function windowed(readAt, total) {
   let start = 0;
   let buffer = new Uint8Array(0);
   return async (offset, len) => {
     if (offset < start || offset + len > start + buffer.length) {
-      const end = Math.min(total - 1, offset + size - 1);
+      const end = Math.min(total - 1, offset + CHUNK - 1);
       buffer = await readAt(offset, end - offset + 1);
       start = offset;
       if (buffer.length < len)
@@ -278,7 +279,7 @@ function rangedStream(url, total, onProgress, gate) {
         controller.close();
         return;
       }
-      const end = Math.min(total - 1, start + RANGE - 1);
+      const end = Math.min(total - 1, start + CHUNK - 1);
       const chunk = await fetchRange(url, start, end);
       controller.enqueue(chunk);
       start += chunk.length;
@@ -1408,7 +1409,7 @@ function App() {
         asSideload(() =>
           sendSideload(
             device,
-            windowed(source, total, WINDOW),
+            windowed(source, total),
             () => {},
             total,
             gate,
