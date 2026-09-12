@@ -1,11 +1,66 @@
 # odin android flash
-小米 MIX 4（odin）刷机向导。底包从小米官方 OSS 直连下载，TWRP 与刷机包从 GitHub Releases 直连下载，浏览器负责本地解压与设备操作。
+
+小米 MIX 4（odin）刷机向导，全部在浏览器里跑。下载、解压、刷写都由页面完成，不需要装驱动或命令行工具，只需要 Chrome 或 Edge（WebUSB）。
+
+## 流程
+
+打开后先选一条流程：
+
+- **初次刷入** — 连接 / 官方底包 / TWRP / 授权 / 刷入授权 / 刷机包 / 完成
+- **更新** — 连接 / TWRP / 刷机包 / 完成
+
+底包刷入按包内 `flash_all.sh` 的命令顺序执行，分区名与文件名都取自脚本，不另行硬编码。
+
+## 设备连接
+
+fastboot 与 ADB 是两个不同的 USB 设备，模式一变就要重新授权，所以每个需要设备的步骤都带一个「选择设备」按钮。设备未选定时该步骤其余控件不可用。
+
+| 步骤 | 模式 |
+| --- | --- |
+| 底包、TWRP | Fastboot |
+| 采集并提交授权 | TWRP 的普通 ADB |
+| 刷入授权包、刷机包 | ADB Sideload |
+
+TWRP 启动后 fastboot 的 USB 句柄会释放；sideload 结束后 ADB 句柄会关闭。切换模式后重新选择设备即可。
+
+## 下载
+
+所有下载都经过 Cloudflare Worker 代理，页面只和同源地址打交道。源站因此需要支持 Range，页面按 64 MiB 分段取，中断则从断点续传。
+
+底包解压出的镜像、刷机包分卷都暂存在 OPFS（浏览器私有文件系统），刷写时按需读取，不常驻内存。步骤结束后会清理。
+
+## Worker
+
+`worker/auth-proxy.js` 处理三条路由：
+
+- `/api/fetch?url=` — 带 Range 的下载代理，目标站点按白名单限制
+- `/api/releases` — GitHub Release 列表，边缘缓存 10 分钟，避免共用出口 IP 触及未认证限额
+- `/api/issue` — 授权服务的跨域转发
+
+```sh
+npm run deploy:worker
+```
+
+开发时 Vite 把 `/api` 代理到线上 worker，见 `vite.config.js`。
 
 ## Release 同步
-`.github/workflows/mega-release.yml` 每 6 小时检查 Mega 公共文件夹，筛选文件名包含“秋城落叶”且排除底包，选择最新文件，在 GitHub Actions 中下载、分卷并创建新 Release。服务器不承载刷机包流量。
+
+- `mega-sync.yml` — 每 12 小时分两次读取 Mega 公共文件夹，筛选文件名含「秋城落叶」且非底包的最新文件，各取一半上传为 Actions artifact
+- `mega-publish.yml` — 每 6 小时检查两侧 artifact，读取 `rom-name.txt` 与 `rom-size.txt`，比对文件名与已有 Release 的标题，未发布过才分卷发布
+
+两侧 artifact 缺失时视为本轮无事可做，不算失败。服务器不承载刷机包流量。
 
 ## 开发
+
 ```sh
 npm ci
-npm run build
+npm run dev        # http://127.0.0.1:5173
+```
+
+未连接设备时勾选页面上的 **Mock 模式**：fastboot 由模拟的 bootloader 应答，ADB 由模拟的守护进程应答，其余部分——下载、解压、按脚本执行、sideload 协议——走的是和真机完全相同的代码。
+
+Mock 模式在「采集并提交授权」这一步需要一份真实的 `request.zip`，放在 `public/request.zip`（已在 `.gitignore` 中，不会进版本库，也不会被部署）。没有它这一步无法通过，因为授权服务只接受真实的采集结果。
+
+```sh
+npm run build      # 产物在 dist/，推送到 main 后由 pages.yml 部署
 ```
