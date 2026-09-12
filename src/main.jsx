@@ -505,13 +505,15 @@ async function sendSideload(adb, source, onProgress, total, gate) {
     await gate?.wait();
     const cmd = new TextDecoder().decode(await readExact(8));
     if (cmd === "DONEDONE") break;
-    if (cmd === "FAILFAIL") throw new AppError("sideloadReject");
+    if (cmd === "FAILFAIL") throw new AppError("sideloadReject", { sent, total });
     const block = Number(cmd);
     if (!Number.isInteger(block)) throw new AppError("sideloadBadBlock", { cmd });
     const offset = block * BLOCK;
     const len = Math.min(BLOCK, total - offset);
     if (len <= 0) throw new AppError("sideloadRange");
     const data = await get(offset, len);
+    if (data.length !== len)
+      throw new AppError("sideloadShort", { block, got: data.length, want: len });
     await writer.write(data);
     sent = Math.max(sent, offset + data.length);
     onProgress(sent, total);
@@ -894,10 +896,12 @@ function mockSideloadSocket(total) {
           return;
         }
         if (!verdict) {
-          verdict =
-            received === total && head === "PK"
-              ? "DONEDONE"
-              : `FAILFAIL:${received}/${total}`;
+          const ok = received === total && head === "PK";
+          if (!ok)
+            console.warn(
+              `[mock] TWRP 判定失败：收到 ${received} / 声明 ${total} 字节，首两字节 ${JSON.stringify(head)}`,
+            );
+          verdict = ok ? "DONEDONE" : "FAILFAIL";
         }
         await wait(4);
         controller.enqueue(encoder.encode(verdict.slice(0, 8)));
@@ -1363,6 +1367,11 @@ function App() {
       }
       // File 也是 Blob，跨分卷的切片的由浏览器处理，不必自己拼接
       const source = new Blob(parts);
+      if (source.size !== total)
+        throw new AppError("romSizeMismatch", {
+          got: source.size,
+          want: total,
+        });
       phase("busyFlashRom");
       await run("adb sideload release parts", () =>
         asSideload(() =>
