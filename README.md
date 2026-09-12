@@ -45,10 +45,13 @@ npm run deploy:worker
 
 ## Release 同步
 
-- `mega-sync.yml` — 每 12 小时分两次读取 Mega 公共文件夹，筛选文件名含「秋城落叶」且非底包的最新文件，各取一半上传为 Actions artifact
-- `mega-publish.yml` — 每 6 小时检查两侧 artifact，读取 `rom-name.txt` 与 `rom-size.txt`，比对文件名与已有 Release 的标题，未发布过才分卷发布
+`mega-sync.yml` 每 6 小时跑一次，筛选 Mega 公共文件夹里文件名含「秋城落叶」且非底包的最新文件：
 
-两侧 artifact 缺失时视为本轮无事可做，不算失败。服务器不承载刷机包流量。
+- `check` — 读文件名与大小，不下载。名字与已有 Release 的标题相同就结束，本轮不产生流量
+- `download-a` / `download-b` — 仅在名字是新的时运行，各取一半，两次串行以免同时占用 Mega 账号的流量额度
+- `publish` — 两半齐了分卷发布为新的 Release，并核对两条 `rom-name.txt` 一致、总字节数等于 `check` 报出的大小
+
+校验只覆盖长度：下载时的 MAC 校验在按范围下载时会被 `megajs` 关掉，所以内容损坏而长度不变的包会通过。服务器不承载刷机包流量。
 
 ## 开发
 
