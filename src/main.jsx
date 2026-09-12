@@ -1152,6 +1152,12 @@ function App() {
     try {
       return await action();
     } finally {
+      // 只是丢掉引用的话，设备仍被本页占着，之后再连必然失败
+      try {
+        await adb.close();
+      } catch (e) {
+        /* 连接已经断了 */
+      }
       setAdb(null);
       setDevice(null);
     }
@@ -1300,6 +1306,8 @@ function App() {
   // 除了第一步，其余步骤都靠这个按钮换设备：fastboot 与 ADB 是两个不同的
   // USB 设备，模式一变就得重新选。
   const selectDevice = async () => {
+    // 重复连接同一个已占用的设备只会失败
+    if (deviceReady) return;
     begin("busySelectDevice");
     try {
       if (mockMode) {
