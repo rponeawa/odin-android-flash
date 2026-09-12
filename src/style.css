@@ -207,6 +207,9 @@ a { color: var(--accent); }
 .file-pick .icon { padding: 6px; }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-pick input { display: none; }
+.file-pick.disabled .file-pick-main { cursor: default; }
+.file-pick.disabled .material-icons { color: var(--disabled); }
+.file-pick.disabled .file-name { color: var(--disabled); }
 
 .select-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .select-row .icon { padding: 6px; }

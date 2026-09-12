@@ -1783,7 +1783,7 @@ function Panel({ children }) {
 }
 function FilePick({ accept, file, onPick, label, disabled }) {
   return (
-    <div className="file-pick">
+    <div className={`file-pick${disabled ? " disabled" : ""}`}>
       <label className="file-pick-main">
         <span className="material-icons">
           {file ? "description" : "folder_open"}
