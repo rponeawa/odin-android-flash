@@ -28,7 +28,8 @@ const COLLECT =
 // 64 MiB 时约七成时间用在传输上，再大则收益递减而失败重下的代价翻倍。
 const CHUNK = 64 * 1024 * 1024;
 const STALL = 30000;
-const BLOCK = 262144;
+// sideload 块大小。取值同 AOSP adb 的 SIDELOAD_HOST_BLOCK_SIZE (adb.h: CHUNK_SIZE)。
+const BLOCK = 64 * 1024;
 const PART = 32 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 const FLOWS = {
