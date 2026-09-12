@@ -103,6 +103,10 @@ const ZH = {
   noFastbootDevice:
     "找到了设备但无法连接。请关闭其他占用 USB 的程序（adb、Android File Transfer 等）后重试",
   chooseDevice: "选择设备",
+  needSideload:
+    "这个设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload 并滑动确认，再重新选择设备",
+  needRecoveryAdb:
+    "这个设备在 ADB Sideload 模式，而这一步需要 TWRP 的普通 ADB。请退出 Sideload 后重新选择设备",
   deviceBusy:
     "找到了设备但无法连接。它可能被其他程序占用（adb、Android File Transfer），请关闭后重试",
   adbNotAllowed: "手机没有允许这台电脑调试。请在手机上点「允许」后重试",
@@ -235,6 +239,10 @@ const EN = {
   noFastbootDevice:
     "Found the device but could not connect. Close other programs using it (adb, Android File Transfer) and try again.",
   chooseDevice: "Choose device",
+  needSideload:
+    "That device is not in ADB Sideload. In TWRP choose Advanced - ADB Sideload, swipe to confirm, then choose the device again",
+  needRecoveryAdb:
+    "That device is in ADB Sideload, but this step needs TWRP's ordinary ADB. Leave Sideload and choose the device again",
   deviceBusy:
     "Found the device but could not connect. Another program may hold it (adb, Android File Transfer); close it and try again",
   adbNotAllowed:

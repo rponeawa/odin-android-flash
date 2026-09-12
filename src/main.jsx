@@ -1380,7 +1380,15 @@ function App() {
       } else {
         const found = await requestAdbDevice();
         if (!found) return;
-        attachAdb(await connectAdb(found));
+        const device = await connectAdb(found);
+        // 模式不对就当场说清楚，别等真正发 sideload 时才失败
+        const mode = adbMode(device);
+        const wanted = needsSideload ? "Recovery Sideload" : "Recovery ADB";
+        if (mode !== wanted) {
+          await device.close().catch(() => {});
+          throw new AppError(needsSideload ? "needSideload" : "needRecoveryAdb");
+        }
+        attachAdb(device);
       }
     } catch (e) {
       showError(e);
@@ -1607,6 +1615,7 @@ function App() {
   const view = flow[step];
   const needsFastboot = view === "base" || view === "twrp";
   const needsAdb = view === "collect" || view === "auth" || view === "rom";
+  const needsSideload = view === "auth" || view === "rom";
   const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
   // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
   // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
