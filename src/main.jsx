@@ -201,7 +201,8 @@ async function connectAdb(device) {
   return new Adb(transport);
 }
 
-// 分两条命令走，各自记一行日志；路径在 TWRP 里，与宿主系统无关
+// 采集程序把 zip 写到 stdout。让它重定向到手机上的文件再拉回来，而不是直接
+// 读 stdout：重定向只捕获 stdout，stderr 不会混进包里，读文件本身也是字节精确的。
 async function pushAndCollect(adb, gate, run) {
   const bin = await downloadToFile(COLLECT, "qlp_collect", undefined, gate);
   const sync = await adb.sync();
@@ -212,29 +213,22 @@ async function pushAndCollect(adb, gate, run) {
       permission: 0o755,
     }),
   );
-  const p = await run("adb shell /tmp/qlp_collect qlp_flash", () =>
-    adb.subprocess.noneProtocol.spawn([
-      "sh",
-      "-c",
-      "/tmp/qlp_collect qlp_flash",
-    ]),
+  const proc = await run(
+    "adb shell /tmp/qlp_collect qlp_flash > /tmp/request.zip",
+    () =>
+      adb.subprocess.noneProtocol.spawn([
+        "sh",
+        "-c",
+        "/tmp/qlp_collect qlp_flash > /tmp/request.zip",
+      ]),
   );
-  const out = await new Response(p.output).blob();
+  // 输出被重定向走了，读完这个空流只为了等进程结束
+  await new Response(proc.output).blob();
+  const out = await run("adb pull /tmp/request.zip", () =>
+    new Response(sync.read("/tmp/request.zip")).blob(),
+  );
   if (!out.size) throw new AppError("collectEmpty");
   return out;
-}
-
-// 进度回调按固定间隔放行。本地写入每秒会产生上千个数据块，
-// 逐个 setState 会让 React 一直重渲染，界面看起来像卡住了。
-function throttled(fn, ms = 250) {
-  if (!fn) return undefined;
-  let last = 0;
-  return (...args) => {
-    const now = performance.now();
-    if (now - last < ms) return;
-    last = now;
-    fn(...args);
-  };
 }
 
 async function opfsRoot() {
@@ -1025,6 +1019,8 @@ async function mockCollectorOutput() {
 
 function mockAdb() {
   const written = [];
+  // 模拟采集程序把包写到手机上的文件，之后再拉回来
+  const deviceFiles = new Map();
   return {
     mock: true,
     serial: "MOCK0DIN0000",
@@ -1038,6 +1034,11 @@ function mockAdb() {
           if (file) await new Response(file).arrayBuffer();
           await wait(400);
         },
+        read(filename) {
+          const blob = deviceFiles.get(filename);
+          if (!blob) throw new Error(`no such file: ${filename}`);
+          return blob.stream();
+        },
         async dispose() {},
       };
     },
@@ -1045,7 +1046,9 @@ function mockAdb() {
       noneProtocol: {
         async spawn() {
           await wait(600);
-          return { output: (await mockCollectorOutput()).stream() };
+          deviceFiles.set("/tmp/request.zip", await mockCollectorOutput());
+          // stdout 被重定向到文件了，这里没有输出
+          return { output: new Blob([]).stream() };
         },
       },
     },
