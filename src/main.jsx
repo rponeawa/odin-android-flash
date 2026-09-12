@@ -1082,7 +1082,7 @@ function App() {
   };
   const ensureAdb = async () => {
     if (adb) return adb;
-    const next = await run("adb connect", () =>
+    const next = await run("adb connect (WebUSB)", () =>
       mockMode
         ? mockAdb()
         : connectAdb().catch((e) => {
@@ -1171,7 +1171,7 @@ function App() {
       const device = mockMode
         ? (await connectMockFastboot()).fastboot
         : new FastbootDevice();
-      await run("fastboot usb connect", () =>
+      await run("fastboot connect (WebUSB)", () =>
         (mockMode ? Promise.resolve() : device.connect()).catch((e) => {
           throw new AppError("noFastbootDevice", undefined, e);
         }),
@@ -1398,12 +1398,13 @@ function App() {
           want: total,
         });
       phase("busyFlashRom");
-      await run("adb sideload release parts", () =>
+      await run(`adb sideload ${rom.name}`, () =>
         asSideload(() =>
           sendSideload(
             device,
             source,
-            (done, all) => setProgress({ label: t("busyFlashRom"), done, total: all }),
+            (done, all) =>
+              setProgress({ label: t("busyFlashRom"), done, total: all }),
             total,
             gate,
           ),
