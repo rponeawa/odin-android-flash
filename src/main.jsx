@@ -123,9 +123,53 @@ const text = (bytes) =>
   new TextDecoder().decode(bytes).replace(/\0.*$/, "").trim();
 
 const wasCancelled = (e) => e?.name === "NotFoundError";
+const FASTBOOT_FILTER = {
+  classCode: 0xff,
+  subclassCode: 0x42,
+  protocolCode: 0x03,
+};
+
+function isFastbootUsb(device) {
+  return (device.configurations || []).some((config) =>
+    (config.interfaces || []).some((face) =>
+      (face.alternates || []).some(
+        (alt) =>
+          alt.interfaceClass === 0xff &&
+          alt.interfaceSubclass === 0x42 &&
+          alt.interfaceProtocol === 0x03,
+      ),
+    ),
+  );
+}
+
+// 已授权过的就不再打扰用户；没有才弹选择窗口。取消返回 null。
+async function requestFastbootUsb() {
+  const granted = (await navigator.usb.getDevices()).find(isFastbootUsb);
+  if (granted) return granted;
+  return navigator.usb
+    .requestDevice({ filters: [FASTBOOT_FILTER] })
+    .catch((e) => {
+      if (wasCancelled(e)) return null;
+      throw e;
+    });
+}
+
+async function requestAdbDevice() {
+  const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
+  return (await manager.getDevices())[0] || (await manager.requestDevice());
+}
 
 // fastboot 用的那个 USB 句柄在进入 TWRP 后已经失效，但接口仍被声明着，
 // 不释放会让接下来的 ADB 连接拿不到设备。
+// 直接接管已经拿到句柄的 USB 设备，不经过库的 connect：它数到不止一个
+// 已授权设备时会再弹一次选择窗口。
+async function attachFastboot(usb) {
+  const fastboot = new FastbootDevice();
+  fastboot.device = usb;
+  await fastboot._validateAndConnectDevice();
+  return fastboot;
+}
+
 async function releaseUsb(fastboot) {
   const usb = fastboot?.device;
   if (!usb) return;
@@ -141,14 +185,8 @@ async function releaseUsb(fastboot) {
   }
 }
 
-async function connectAdb() {
+async function connectAdb(device) {
   if (!navigator.usb) throw new AppError("noWebUsb");
-  const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
-  const device = await manager.requestDevice().catch((e) => {
-    if (wasCancelled(e)) throw new AppError("noDeviceChosen");
-    throw e;
-  });
-  if (!device) throw new AppError("noDeviceChosen");
   const connection = await device.connect().catch((e) => {
     throw new AppError("deviceBusy", undefined, e);
   });
@@ -1108,14 +1146,6 @@ function App() {
       serial: next.serial || "",
     });
   };
-  const ensureAdb = async () => {
-    if (adb) return adb;
-    const next = await run("adb connect (WebUSB)", () =>
-      mockMode ? mockAdb() : connectAdb(),
-    );
-    attachAdb(next);
-    return next;
-  };
   const asSideload = async (action) => {
     setDevice((d) => (d ? { ...d, mode: "Recovery Sideload" } : d));
     try {
@@ -1192,15 +1222,18 @@ function App() {
   const connect = async () => {
     phase("busyConnectFastboot");
     try {
+      const usb = mockMode ? null : await requestFastbootUsb();
+      if (!mockMode && !usb) {
+        finish();
+        return;
+      }
       const device = mockMode
         ? (await connectMockFastboot()).fastboot
-        : new FastbootDevice();
-      await run("fastboot connect (WebUSB)", () =>
-        (mockMode ? Promise.resolve() : device.connect()).catch((e) => {
-          if (wasCancelled(e)) throw new AppError("noDeviceChosen");
-          throw new AppError("noFastbootDevice", undefined, e);
-        }),
-      );
+        : await run("fastboot connect (WebUSB)", () =>
+            attachFastboot(usb).catch((e) => {
+              throw new AppError("noFastbootDevice", undefined, e);
+            }),
+          );
       const product = await run("fastboot getvar product", () =>
         device.getVariable("product"),
       );
@@ -1263,6 +1296,44 @@ function App() {
       finish();
     }
   };
+  // 除了第一步，其余步骤都靠这个按钮换设备：fastboot 与 ADB 是两个不同的
+  // USB 设备，模式一变就得重新选。
+  const selectDevice = async () => {
+    begin("busySelectDevice");
+    try {
+      if (mockMode) {
+        if (needsFastboot) {
+          setFastboot((await connectMockFastboot()).fastboot);
+          setDevice({
+            mode: "Fastboot",
+            name: "odin",
+            serial: "MOCK0DIN0000",
+          });
+        } else {
+          attachAdb(mockAdb());
+        }
+        return;
+      }
+      if (needsFastboot) {
+        const usb = await requestFastbootUsb();
+        if (!usb) return;
+        setFastboot(await attachFastboot(usb));
+        setDevice({
+          mode: "Fastboot",
+          name: usb.serialNumber || "",
+          serial: usb.serialNumber || "",
+        });
+      } else {
+        const found = await requestAdbDevice();
+        if (!found) return;
+        attachAdb(await connectAdb(found));
+      }
+    } catch (e) {
+      showError(e);
+    } finally {
+      finish();
+    }
+  };
   const skipBase = () => {
     notify(t("skippedBase"));
     advance();
@@ -1301,12 +1372,12 @@ function App() {
     }
   };
   const collect = async () => {
+    if (!adb) return;
     begin("busyCollect");
     try {
-      const device = await ensureAdb();
       const request = await run(
         "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
-        () => pushAndCollect(device, gate),
+        () => pushAndCollect(adb, gate),
       );
       phase("busySubmit");
       const result = await issueAuthorization(
@@ -1327,14 +1398,14 @@ function App() {
     }
   };
   const flashAuthorization = async () => {
-    if (!issued) return;
+    if (!adb || !issued) return;
     begin("busyFlashAuth");
     try {
-      const device = await ensureAdb();
+      if (!adb) return;
       await run(`adb sideload ${issued.name}`, () =>
         asSideload(() =>
           sendSideload(
-            device,
+            adb,
             issued.blob,
             (done, total) =>
               setProgress({ label: t("busyFlashAuth"), done, total }),
@@ -1359,16 +1430,16 @@ function App() {
     }
   };
   const flash = async () => {
-    if (!rom && !romFile) return;
+    if (!adb || (!rom && !romFile)) return;
     begin(romFile ? "busyFlashLocalRom" : "busyDownloadRom");
     try {
-      const device = await ensureAdb();
+      if (!adb) return;
       if (romFile) {
         const started = performance.now();
         await run(`adb sideload ${romFile.name}`, () =>
           asSideload(() =>
             sendSideload(
-              device,
+              adb,
               romFile,
             (done, total) => {
               const elapsed = performance.now() - started - gate.pausedMs;
@@ -1384,7 +1455,7 @@ function App() {
             ),
           ),
         );
-        await reboot(device);
+        await reboot(adb);
         await clearStorage();
         advance();
         notify(t("romFlashed"));
@@ -1428,7 +1499,7 @@ function App() {
       await run(`adb sideload ${rom.name}`, () =>
         asSideload(() =>
           sendSideload(
-            device,
+            adb,
             source,
             (done, all) =>
               setProgress({ label: t("busyFlashRom"), done, total: all }),
@@ -1437,7 +1508,7 @@ function App() {
           ),
         ),
       );
-      await reboot(device);
+      await reboot(adb);
       await clearStorage();
       advance();
       notify(t("romFlashed"));
@@ -1478,6 +1549,20 @@ function App() {
   ) : null;
   const flow = FLOWS[mode] || [];
   const view = flow[step];
+  const needsFastboot = view === "base" || view === "twrp";
+  const needsAdb = view === "collect" || view === "auth" || view === "rom";
+  const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
+  const deviceButton = (
+    <button
+      type="button"
+      className="secondary"
+      onClick={selectDevice}
+      disabled={!!busy}
+    >
+      <span className="material-icons">usb</span>
+      {t("chooseDevice")}
+    </button>
+  );
   const fallback = { label: busy || t("waiting") };
   const dark = theme ? theme === "dark" : systemDark;
   return (
@@ -1629,6 +1714,7 @@ function App() {
               <Actions
                 extra={
                   <>
+                    {deviceButton}
                     {pauseButton}
                     <button
                       type="button"
@@ -1642,7 +1728,7 @@ function App() {
                   </>
                 }
                 onClick={flashBase}
-                disabled={!fastboot || !!busy}
+                disabled={!deviceReady || !!busy}
               >
                 {busy ||
                   (baseFile
@@ -1664,9 +1750,14 @@ function App() {
                 label={t("pickTwrp")}
               />
               <Actions
-                extra={pauseButton}
+                extra={
+                  <>
+                    {deviceButton}
+                    {pauseButton}
+                  </>
+                }
                 onClick={bootTwrp}
-                disabled={!fastboot || !!busy}
+                disabled={!deviceReady || !!busy}
               >
                 {busy ||
                   (twrpFile
@@ -1682,9 +1773,14 @@ function App() {
             <p>{t("collectText")}</p>
             <Panel>
               <Actions
-                extra={pauseButton}
+                extra={
+                  <>
+                    {deviceButton}
+                    {pauseButton}
+                  </>
+                }
                 onClick={collect}
-                disabled={!!busy}
+                disabled={!deviceReady || !!busy}
               >
                 {busy || t("collectAction")}
               </Actions>
@@ -1697,9 +1793,14 @@ function App() {
             <p>{t("authFlashText")}</p>
             <Panel>
               <Actions
-                extra={pauseButton}
+                extra={
+                  <>
+                    {deviceButton}
+                    {pauseButton}
+                  </>
+                }
                 onClick={flashAuthorization}
-                disabled={!issued || !!busy}
+                disabled={!deviceReady || !issued || !!busy}
               >
                 {busy || t("authFlashAction")}
               </Actions>
@@ -1714,7 +1815,7 @@ function App() {
               <Select
                 value={rom?.id ? String(rom.id) : ""}
                 placeholder={t("selectVersion")}
-                disabled={!!busy}
+                disabled={!deviceReady || !!busy}
                 options={releases.map((x) => ({
                   value: String(x.id),
                   label: x.name,
@@ -1732,9 +1833,14 @@ function App() {
                 label={t("pickRom")}
               />
               <Actions
-                extra={pauseButton}
+                extra={
+                  <>
+                    {deviceButton}
+                    {pauseButton}
+                  </>
+                }
                 onClick={flash}
-                disabled={(!rom && !romFile) || !!busy}
+                disabled={!deviceReady || (!rom && !romFile) || !!busy}
               >
                 {busy ||
                   (romFile

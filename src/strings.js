@@ -51,7 +51,7 @@ const ZH = {
   pickTwrp: "选择本地 TWRP 镜像",
 
   collectTitle: "采集并提交授权",
-  collectText: "请让 TWRP 停留在主界面。",
+  collectText: "进入 TWRP 后，先在手机上滑动滑块允许调试，再点「选择设备」。",
   collectAction: "采集并提交授权",
 
   authFlashTitle: "刷入授权包",
@@ -68,6 +68,7 @@ const ZH = {
   home: "返回主页",
 
   busyConnectFastboot: "连接中",
+  busySelectDevice: "选择设备中",
   busyDownloadBase: "下载底包中",
   busyUnpackBase: "解压底包中",
   busyReadLocalBase: "读取本地底包中",
@@ -97,7 +98,7 @@ const ZH = {
   noOpfs: "当前浏览器不支持本地暂存，无法处理大文件。请使用 Chrome 或 Edge",
   noFastbootDevice:
     "找到了设备但无法连接。请关闭其他占用 USB 的程序（adb、Android File Transfer 等）后重试",
-  noDeviceChosen: "没有选择设备。请重新点击按钮，并在弹出的窗口里选择手机",
+  chooseDevice: "选择设备",
   deviceBusy:
     "找到了设备但无法连接。它可能被其他程序占用（adb、Android File Transfer），请关闭后重试",
   adbNotAllowed: "手机没有允许这台电脑调试。请在手机上点「允许」后重试",
@@ -175,7 +176,8 @@ const EN = {
   pickTwrp: "Choose a local TWRP image",
 
   collectTitle: "Collect and submit",
-  collectText: "Leave TWRP on its main screen.",
+  collectText:
+    "In TWRP, swipe the slider on the phone to allow debugging, then choose the device.",
   collectAction: "Collect and submit",
 
   authFlashTitle: "Flash authorization",
@@ -192,6 +194,7 @@ const EN = {
   home: "Back to start",
 
   busyConnectFastboot: "Connecting",
+  busySelectDevice: "Choosing a device",
   busyDownloadBase: "Downloading firmware",
   busyUnpackBase: "Unpacking firmware",
   busyReadLocalBase: "Reading local firmware",
@@ -221,8 +224,7 @@ const EN = {
   noOpfs: "This browser cannot stage files locally, so large packages cannot be handled. Use Chrome or Edge.",
   noFastbootDevice:
     "Found the device but could not connect. Close other programs using it (adb, Android File Transfer) and try again.",
-  noDeviceChosen:
-    "No device was chosen. Press the button again and pick the phone in the dialog",
+  chooseDevice: "Choose device",
   deviceBusy:
     "Found the device but could not connect. Another program may hold it (adb, Android File Transfer); close it and try again",
   adbNotAllowed:
