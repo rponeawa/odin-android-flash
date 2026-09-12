@@ -1,15 +1,46 @@
-name: Mega ROM watcher
+name: Mega ROM sync
 on:
   schedule:
-    - cron: "17 */12 * * *"
-    - cron: "47 */12 * * *"
+    - cron: "23 */6 * * *"
   workflow_dispatch:
 permissions:
   contents: write
-  actions: read
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      title: ${{ steps.gate.outputs.title }}
+      size: ${{ steps.gate.outputs.size }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Read the newest ROM's name and size
+        env:
+          MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
+          NAME_OUTPUT: rom-name.txt
+          SIZE_OUTPUT: rom-size.txt
+        run: node scripts/mega-range.mjs
+      - name: Publish only when the name is new
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title=$(cat rom-name.txt)
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "size=$(cat rom-size.txt)" >> "$GITHUB_OUTPUT"
+          if gh release list --limit 200 --json name --jq '.[].name' | grep -Fxq "$title"; then
+            echo "$title 已发布，本次不下载"
+            echo "publish=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=yes" >> "$GITHUB_OUTPUT"
+          fi
   download-a:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 */12 * * *'
+    needs: check
+    if: needs.check.outputs.publish == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -17,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci
-      - name: Download Mega first range
+      - name: Download the first half
         env:
           MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
           RANGE_SIDE: a
@@ -27,15 +58,16 @@ jobs:
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
         with:
-          name: mega-sync-a
+          name: mega-a
           path: |
             range-a.bin
             rom-name.txt
             rom-size.txt
           compression-level: 0
-          retention-days: 3
+          retention-days: 1
   download-b:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '47 */12 * * *'
+    needs: check
+    if: needs.check.outputs.publish == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -43,7 +75,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci
-      - name: Download Mega second range
+      - name: Download the second half
         env:
           MEGA_FOLDER_URL: https://mega.nz/folder/1vEx1Taa#YvX3h6dBTljL9X5TdsX0HQ
           RANGE_SIDE: b
@@ -53,10 +85,44 @@ jobs:
         run: node scripts/mega-range.mjs
       - uses: actions/upload-artifact@v4
         with:
-          name: mega-sync-b
+          name: mega-b
           path: |
             range-b.bin
             rom-name.txt
             rom-size.txt
           compression-level: 0
-          retention-days: 3
+          retention-days: 1
+  publish:
+    needs: [check, download-a, download-b]
+    if: needs.check.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: mega-a, path: a }
+      - uses: actions/download-artifact@v4
+        with: { name: mega-b, path: b }
+      - name: Split and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ needs.check.outputs.title }}
+          SIZE: ${{ needs.check.outputs.size }}
+        run: |
+          set -euo pipefail
+          # 两半必须是同一个包：下载期间 Mega 上换了文件就会不一致
+          test "$(cat a/rom-name.txt)" = "$(cat b/rom-name.txt)"
+          test "$(cat a/rom-name.txt)" = "$TITLE"
+          tag="rom-$(date -u +%Y%m%d%H%M%S)"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes '由 Mega 同步。分卷按文件名顺序拼接。'
+          published=0
+          for side in a b; do
+            mv "a/range-$side.bin" "range-$side.bin" 2>/dev/null || mv "b/range-$side.bin" "range-$side.bin"
+            published=$((published + $(wc -c < "range-$side.bin")))
+            split -b 1900m -d -a 3 "range-$side.bin" "odin-rom.zip.part-$side-"
+            rm -f "range-$side.bin"
+            for f in odin-rom.zip.part-$side-*; do
+              gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY"
+              rm -f "$f"
+            done
+          done
+          test "$published" = "$SIZE"
+          echo "已发布 $TITLE，共 $published 字节"
