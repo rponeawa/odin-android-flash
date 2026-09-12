@@ -64,7 +64,7 @@ const ZH = {
   pickRom: "选择本地 ROM",
 
   doneTitle: "完成",
-  doneText: "ROM 已刷入。设备没有自动重启时，在 TWRP 中选择重启。",
+  doneText: "ROM 已刷入。请等待设备开机。",
   home: "返回主页",
 
   busyConnectFastboot: "连接中",
@@ -186,7 +186,7 @@ const EN = {
   pickRom: "Choose a local ROM",
 
   doneTitle: "Done",
-  doneText: "The ROM is flashed. If the device does not reboot on its own, reboot it from TWRP.",
+  doneText: "The ROM is flashed. Wait for the device to boot.",
   home: "Back to start",
 
   busyConnectFastboot: "Connecting",
