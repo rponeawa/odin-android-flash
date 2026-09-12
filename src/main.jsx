@@ -223,13 +223,10 @@ async function pushAndCollect(adb, gate, run) {
     () =>
       adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
   );
-  const said = (await new Response(proc.output).text()).trim();
-  // 程序没跑起来时 stdout 是 shell 的报错，别把它当成路径去拉
-  if (!said.startsWith("/"))
-    throw new AppError("collectorFailed", { text: said });
-  const out = await run(`adb pull ${said}`, () =>
-    new Response(sync.read(said)).blob(),
-  );
+  const raw = new Uint8Array(await new Response(proc.output).arrayBuffer());
+  const zip = cutZip(raw);
+  if (!zip) throw new AppError("collectorFailed", { text: "没有找到 zip" });
+  const out = new Blob([zip]);
   if (!out.size) throw new AppError("collectEmpty");
   return out;
 }
@@ -245,6 +242,28 @@ function throttled(fn, ms = 250) {
     last = now;
     fn(...args);
   };
+}
+
+// 采集程序把 zip 和一行日志都写到 stdout，日志跟在 zip 后面。
+// 按 zip 自己的结构切出来：从第一个本地文件头，到中央目录结尾记录。
+function cutZip(bytes) {
+  const at = (i, sig) => sig.every((b, k) => bytes[i + k] === b);
+  let start = -1;
+  for (let i = 0; i + 4 <= bytes.length; i += 1) {
+    if (at(i, [0x50, 0x4b, 0x03, 0x04])) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return null;
+  for (let i = bytes.length - 22; i >= start; i -= 1) {
+    if (at(i, [0x50, 0x4b, 0x05, 0x06])) {
+      const comment = bytes[i + 20] | (bytes[i + 21] << 8);
+      const end = i + 22 + comment;
+      return bytes.slice(start, end);
+    }
+  }
+  return null;
 }
 
 async function opfsRoot() {
