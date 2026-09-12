@@ -51,7 +51,7 @@ npm run deploy:worker
 - `download-a` / `download-b` — 仅在名字是新的时运行，各取一半，两次串行以免同时占用 Mega 账号的流量额度
 - `publish` — 两半齐了分卷发布为新的 Release，并核对两条 `rom-name.txt` 一致、总字节数等于 `check` 报出的大小
 
-校验只覆盖长度：下载时的 MAC 校验在按范围下载时会被 `megajs` 关掉，所以内容损坏而长度不变的包会通过。服务器不承载刷机包流量。
+服务器不承载刷机包流量。
 
 ## 开发
 
