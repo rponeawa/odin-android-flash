@@ -66,7 +66,8 @@ jobs:
           compression-level: 0
           retention-days: 1
   download-b:
-    needs: check
+    # 串在 a 之后：两半同时从同一个 Mega 账号拉会撞流量限制
+    needs: [check, download-a]
     if: needs.check.outputs.publish == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 180
