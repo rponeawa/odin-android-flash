@@ -6,7 +6,7 @@ const ZH = {
   welcomeTitle: "开始",
   creditBy: "ROM 作者：酷安",
   creditName: "@秋城落叶",
-  creditSync: "刷机包自动同步于其分发的 Mega 网盘",
+  creditSync: "ROM 自动同步于其分发的 Mega 网盘",
   creditQq: "QQ 群【MIX4@秋城落叶】：",
   leaveTitle: "返回开始页面？",
   leaveText: "当前进度会丢失。",
