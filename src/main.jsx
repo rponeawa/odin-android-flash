@@ -24,7 +24,8 @@ const GROUP = "https://qm.qq.com/q/LslPTWDqo0";
 const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
-const RANGE = 8 * 1024 * 1024;
+const RANGE = 32 * 1024 * 1024;
+const WINDOW = 64 * 1024 * 1024;
 const STALL = 30000;
 const BLOCK = 262144;
 const PART = 32 * 1024 * 1024;
@@ -250,6 +251,21 @@ async function fetchRange(url, from, to) {
       clearTimeout(timer);
     }
   }
+}
+
+function windowed(readAt, total, size) {
+  let start = 0;
+  let buffer = new Uint8Array(0);
+  return async (offset, len) => {
+    if (offset < start || offset + len > start + buffer.length) {
+      const end = Math.min(total - 1, offset + size - 1);
+      buffer = await readAt(offset, end - offset + 1);
+      start = offset;
+      if (buffer.length < len)
+        throw new AppError("downloadFailed", { status: 206 });
+    }
+    return buffer.subarray(offset - start, offset - start + len);
+  };
 }
 
 function rangedStream(url, total, onProgress, gate) {
@@ -1389,7 +1405,15 @@ function App() {
         return out;
       };
       await run("adb sideload release parts", () =>
-        asSideload(() => sendSideload(device, source, () => {}, total, gate)),
+        asSideload(() =>
+          sendSideload(
+            device,
+            windowed(source, total, WINDOW),
+            () => {},
+            total,
+            gate,
+          ),
+        ),
       );
       await reboot(device);
       advance();
