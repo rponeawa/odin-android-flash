@@ -459,25 +459,15 @@ async function extractBasePackage(file, onProgress) {
   return { files, scriptName, scriptText };
 }
 
+// 只看以 fastboot 开头的行，所以 if 判断、echo、exit 那些本来就落不进来，
+// 条件块里的 flash 也会照收——不必再跟踪 if/fi 的层级。
 function parseFlashScript(script) {
   const steps = [];
-  let depth = 0;
   for (const raw of script.split("\n")) {
     const line = raw
       .replace(/`dirname\s+\$0`|\$\(dirname\s+\$0\)/g, ".")
       .trim();
     if (!line || line.startsWith("#")) continue;
-    const opens = /^if\b/.test(line);
-    const closes = /(^|[\s;])fi$/.test(line);
-    if (opens) {
-      if (!closes) depth += 1;
-      continue;
-    }
-    if (closes) {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (depth > 0) continue;
     const call = line.match(/^fastboot\s+(.+)$/);
     if (!call) continue;
     const tokens = call[1]
