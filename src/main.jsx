@@ -521,7 +521,15 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   await socket.close();
 }
 
-const BOOT_MAGIC = [0x41, 0x4e, 0x44, 0x52, 0x4f, 0x49, 0x44, 0x21];
+// Android 启动镜像的魔数：boot/init_boot/recovery 是 ANDROID!，
+// vendor_boot 是 VNDRBOOT，两者不同。
+const BOOT_MAGICS = {
+  boot: [0x41, 0x4e, 0x44, 0x52, 0x4f, 0x49, 0x44, 0x21],
+  init_boot: [0x41, 0x4e, 0x44, 0x52, 0x4f, 0x49, 0x44, 0x21],
+  recovery: [0x41, 0x4e, 0x44, 0x52, 0x4f, 0x49, 0x44, 0x21],
+  vendor_boot: [0x56, 0x4e, 0x44, 0x52, 0x42, 0x4f, 0x4f, 0x54],
+};
+const ANDROID_MAGIC = BOOT_MAGICS.boot;
 const SLOT_PARTITIONS = new Set([
   "boot",
   "init_boot",
@@ -549,7 +557,14 @@ const SLOT_PARTITIONS = new Set([
   "cpucp",
   "qweslicstore",
 ]);
-const BOOT_MAGIC_PARTITIONS = /^(boot|init_boot|recovery|vendor_boot)/;
+function magicFor(partition) {
+  const name = partition.replace(/_(ab|[ab])$/, "");
+  return BOOT_MAGICS[name];
+}
+
+function hasMagic(bytes, magic) {
+  return !magic || magic.every((byte, i) => bytes[i] === byte);
+}
 const LOGICAL_PARTITIONS = new Set([
   "system",
   "system_ext",
@@ -697,12 +712,9 @@ function mockBootloader() {
           fail(`Malformed sparse image: ${sparse.error}`);
           return;
         }
-        if (!sparse && BOOT_MAGIC_PARTITIONS.test(rest)) {
-          const bad = BOOT_MAGIC.some((byte, i) => bytes[i] !== byte);
-          if (bad) {
-            fail(`Image is not a boot image`);
-            return;
-          }
+        if (!sparse && !hasMagic(bytes, magicFor(rest))) {
+          fail(`Image is not a boot image`);
+          return;
         }
         const written = sparse?.expanded ?? bytes.length;
         writes.push({
@@ -744,7 +756,7 @@ function mockBootloader() {
           return;
         }
         const bytes = takePayload();
-        if (!sparseInfo(bytes) && BOOT_MAGIC.some((byte, i) => bytes[i] !== byte)) {
+        if (!sparseInfo(bytes) && !hasMagic(bytes, ANDROID_MAGIC)) {
           fail("Image is not a boot image");
           return;
         }
