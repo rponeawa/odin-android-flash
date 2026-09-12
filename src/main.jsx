@@ -231,6 +231,19 @@ async function pushAndCollect(adb, gate, run) {
   return out;
 }
 
+// 进度回调按固定间隔放行。本地写入每秒会产生上千个数据块，
+// 逐个 setState 会让 React 一直重渲染，界面看起来像卡住了。
+function throttled(fn, ms = 250) {
+  if (!fn) return undefined;
+  let last = 0;
+  return (...args) => {
+    const now = performance.now();
+    if (now - last < ms) return;
+    last = now;
+    fn(...args);
+  };
+}
+
 async function opfsRoot() {
   if (!navigator.storage?.getDirectory) throw new AppError("noOpfs");
   return navigator.storage.getDirectory();
