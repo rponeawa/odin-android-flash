@@ -398,7 +398,7 @@ function parseFlashScript(script) {
   return steps;
 }
 
-async function runFlashScript(fastboot, resolve, steps, onFlash, run) {
+async function runFlashScript(fastboot, resolve, steps, onFlash, run, prefix) {
   let index = 0;
   for (const step of steps) {
     index += 1;
@@ -408,21 +408,21 @@ async function runFlashScript(fastboot, resolve, steps, onFlash, run) {
       if (!image) throw new AppError("baseMissingFile", { file: step.file });
       await run(`fastboot flash ${step.partition} ${step.file}`, () =>
         fastboot.flashBlob(step.partition, image, (p) =>
-          onFlash(t("progFlash", { partition: step.partition, index: label }), p),
+          onFlash(`${prefix} ${step.partition} ${label}`, p),
         ),
       );
     } else if (step.verb === "erase") {
-      onFlash(t("progErase", { partition: step.partition, index: label }), 0);
+      onFlash(`${prefix} ${step.partition} ${label}`, 0);
       await run(`fastboot erase ${step.partition}`, () =>
         fastboot.runCommand(`erase:${step.partition}`),
       );
-      onFlash(t("progErase", { partition: step.partition, index: label }), 1);
+      onFlash(`${prefix} ${step.partition} ${label}`, 1);
     } else if (step.verb === "set_active") {
-      onFlash(t("progSlot", { slot: step.slot, index: label }), 0);
+      onFlash(`${prefix} ${step.slot} ${label}`, 0);
       await run(`fastboot set_active ${step.slot}`, () =>
         fastboot.runCommand(`set_active:${step.slot}`),
       );
-      onFlash(t("progSlot", { slot: step.slot, index: label }), 1);
+      onFlash(`${prefix} ${step.slot} ${label}`, 1);
     }
   }
 }
@@ -1018,10 +1018,16 @@ function App() {
     else gate.pause();
     setPaused(gate.paused);
   };
-  const begin = (label) => {
+  // 按钮文字和状态行共用同一个阶段名，避免两者在切换瞬间各说各话
+  const phase = (key) => {
+    const text = t(key);
+    setBusy(text);
+    setProgress({ label: text });
+  };
+  const begin = (key) => {
     gate.reset();
     setPaused(false);
-    setBusy(label);
+    phase(key);
   };
   const finish = () => {
     gate.reset();
@@ -1123,7 +1129,7 @@ function App() {
       .catch(showError);
   }, []);
   const connect = async () => {
-    setBusy(t("busyConnectFastboot"));
+    phase("busyConnectFastboot");
     try {
       const device = mockMode
         ? (await connectMockFastboot()).fastboot
@@ -1147,21 +1153,20 @@ function App() {
     } catch (e) {
       showError(e);
     } finally {
-      setBusy("");
+      finish();
     }
   };
   const flashBase = async () => {
     if (!fastboot) return;
-    const label = baseFile ? t("busyReadLocalBase") : t("busyDownloadBase");
-    begin(label);
+    begin(baseFile ? "busyReadLocalBase" : "busyDownloadBase");
     try {
       await clearStorage();
       const archive =
         baseFile ||
         (await downloadToFile(BASE, "base.tgz", (done, total, speed) =>
-          setProgress({ label, done, total, speed }),
+          setProgress({ label: t("busyDownloadBase"), done, total, speed }),
         gate));
-      setBusy(t("busyUnpackBase"));
+      phase("busyUnpackBase");
       const { files, scriptName, scriptText } = await extractBasePackage(
         archive,
         (done) =>
@@ -1176,10 +1181,17 @@ function App() {
       };
       const steps = parseFlashScript(scriptText);
       if (!steps.length) throw new AppError("baseNoCommands", { script: SCRIPT });
-      setBusy(t("busyFlashBase"));
+      phase("busyFlashBase");
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
-      await runFlashScript(fastboot, resolve, steps, onFlash, run);
+      await runFlashScript(
+        fastboot,
+        resolve,
+        steps,
+        onFlash,
+        run,
+        t("busyFlashBase"),
+      );
       notify(t("baseFlashed", { script: SCRIPT, count: steps.length }));
       await clearStorage();
       advance();
@@ -1195,7 +1207,7 @@ function App() {
   };
   const bootTwrp = async () => {
     if (!fastboot) return;
-    begin(t("busyBootTwrp"));
+    begin("busyDownloadTwrp");
     try {
       const blob =
         twrpFile ||
@@ -1203,13 +1215,14 @@ function App() {
           TWRP,
           "twrp.img",
           (done, total, speed) =>
-            setProgress({ label: t("progDownloadTwrp"), done, total, speed }),
+            setProgress({ label: t("busyDownloadTwrp"), done, total, speed }),
           gate,
         ));
+      phase("busyBootTwrp");
       await run(`fastboot boot <${twrpFile?.name || "qlp_twrp.img"}>`, () =>
         fastboot.bootBlob(blob, (p) =>
           setProgress({
-            label: t("progUploadTwrp"),
+            label: t("busyBootTwrp"),
             done: Math.round(p * 1000),
             total: 1000,
           }),
@@ -1224,18 +1237,20 @@ function App() {
     }
   };
   const collect = async () => {
-    begin(t("busyCollect"));
+    begin("busyCollect");
     try {
       const device = await ensureAdb();
       const request = await run(
         "adb push qlp_collect /tmp/qlp_collect && adb shell /tmp/qlp_collect qlp_flash",
         () => pushAndCollect(device, gate),
       );
-      setBusy(t("busySubmit"));
+      phase("busySubmit");
       const result = await issueAuthorization(
         request,
-        (label, done, total, speed) =>
-          setProgress({ label, done, total, speed }),
+        (label, done, total, speed) => {
+          setBusy(label);
+          setProgress({ label, done, total, speed });
+        },
         gate,
       );
       setIssued(result);
@@ -1249,7 +1264,7 @@ function App() {
   };
   const flashAuthorization = async () => {
     if (!issued) return;
-    begin(t("busyFlashAuth"));
+    begin("busyFlashAuth");
     try {
       const device = await ensureAdb();
       await run(`adb sideload ${issued.name}`, () =>
@@ -1257,7 +1272,8 @@ function App() {
           sendSideload(
             device,
             issued.blob,
-            (done, total) => setProgress({ label: t("progFlashAuth"), done, total }),
+            (done, total) =>
+              setProgress({ label: t("busyFlashAuth"), done, total }),
             issued.blob.size,
             gate,
           ),
@@ -1280,7 +1296,7 @@ function App() {
   };
   const flash = async () => {
     if (!rom && !romFile) return;
-    begin(romFile ? t("busyFlashLocalRom") : t("busyFlashRom"));
+    begin(romFile ? "busyFlashLocalRom" : "busyDownloadRom");
     try {
       const device = await ensureAdb();
       if (romFile) {
@@ -1316,6 +1332,7 @@ function App() {
           a.name.localeCompare(b.name, undefined, { numeric: true }),
         );
       const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
+      phase("busyDownloadRom");
       let downloaded = 0;
       const parts = [];
       for (const asset of assets) {
@@ -1326,7 +1343,7 @@ function App() {
             asset.name,
             (done, partTotal, speed) =>
               setProgress({
-                label: t("progDownloadRom"),
+                label: t("busyDownloadRom"),
                 done: base + done,
                 total,
                 speed,
@@ -1338,8 +1355,17 @@ function App() {
       }
       // File 也是 Blob，跨分卷的切片的由浏览器处理，不必自己拼接
       const source = new Blob(parts);
+      phase("busyFlashRom");
       await run("adb sideload release parts", () =>
-        asSideload(() => sendSideload(device, source, () => {}, total, gate)),
+        asSideload(() =>
+          sendSideload(
+            device,
+            source,
+            (done, all) => setProgress({ label: t("busyFlashRom"), done, total: all }),
+            total,
+            gate,
+          ),
+        ),
       );
       await reboot(device);
       await clearStorage();
