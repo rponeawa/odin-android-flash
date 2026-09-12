@@ -908,10 +908,16 @@ function mockSideloadSocket(total) {
           return;
         }
         if (!verdict) {
-          const ok = received === total && head === "PK";
+          // sideload-host 只搬字节，不校验包内容；是不是合法 zip 由之后
+          // 的安装器判断，模拟器不代劳，只在控制台提示。
+          const ok = received === total;
           if (!ok)
             console.warn(
-              `[mock] TWRP 判定失败：收到 ${received} / 声明 ${total} 字节，首两字节 ${JSON.stringify(head)}`,
+              `[mock] 字节数不符：收到 ${received}，声明 ${total}`,
+            );
+          else if (head !== "PK")
+            console.warn(
+              `[mock] 字节数正确，但前两字节是 ${JSON.stringify(head)} 而非 "PK"`,
             );
           verdict = ok ? "DONEDONE" : "FAILFAIL";
         }
