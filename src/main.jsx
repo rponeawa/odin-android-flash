@@ -1572,7 +1572,9 @@ function App() {
   const needsFastboot = view === "base" || view === "twrp";
   const needsAdb = view === "collect" || view === "auth" || view === "rom";
   const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
-  const deviceButton = (
+  // 只在设备真的换了模式、或者手上没有设备时才给这个按钮。连接之后到 TWRP
+  // 启动之前是同一个 fastboot 设备，没必要让用户重选。
+  const deviceButton = deviceReady ? null : (
     <button
       type="button"
       className="secondary"
