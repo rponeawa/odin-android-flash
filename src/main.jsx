@@ -973,6 +973,7 @@ function App() {
   const [toast, setToast] = useState(null);
   const [leaving, setLeaving] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [pausable, setPausable] = useState(false);
   const [device, setDevice] = useState(null);
   const [issued, setIssued] = useState(null);
   const [lang, setLangState] = useState(getLang());
@@ -1019,15 +1020,22 @@ function App() {
     setPaused(gate.paused);
   };
   // 按钮文字和状态行共用同一个阶段名，避免两者在切换瞬间各说各话
-  const phase = (key) => {
+  // pausable 只在下载阶段为真：刷写和 sideload 期间闸门不会被查询，
+  // 挂住也会让设备干等，所以那时不提供暂停。
+  const phase = (key, pausable = false) => {
     const text = t(key);
     setBusy(text);
     setProgress({ label: text });
+    setPausable(pausable);
+    if (!pausable) {
+      gate.resume();
+      setPaused(false);
+    }
   };
-  const begin = (key) => {
+  const begin = (key, pausable = false) => {
     gate.reset();
     setPaused(false);
-    phase(key);
+    phase(key, pausable);
   };
   const finish = () => {
     gate.reset();
@@ -1158,7 +1166,7 @@ function App() {
   };
   const flashBase = async () => {
     if (!fastboot) return;
-    begin(baseFile ? "busyReadLocalBase" : "busyDownloadBase");
+    begin(baseFile ? "busyReadLocalBase" : "busyDownloadBase", !baseFile);
     try {
       await clearStorage();
       const archive =
@@ -1207,7 +1215,7 @@ function App() {
   };
   const bootTwrp = async () => {
     if (!fastboot) return;
-    begin("busyDownloadTwrp");
+    begin("busyDownloadTwrp", !twrpFile);
     try {
       const blob =
         twrpFile ||
@@ -1332,7 +1340,7 @@ function App() {
           a.name.localeCompare(b.name, undefined, { numeric: true }),
         );
       const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
-      phase("busyDownloadRom");
+      phase("busyDownloadRom", true);
       let downloaded = 0;
       const parts = [];
       for (const asset of assets) {
@@ -1400,7 +1408,7 @@ function App() {
     setLang(next);
     setLangState(next);
   };
-  const pauseButton = busy ? (
+  const pauseButton = busy && pausable ? (
     <button type="button" className="secondary" onClick={togglePause}>
       <span className="material-icons">{paused ? "play_arrow" : "pause"}</span>
       {paused ? t("resume") : t("pause")}
