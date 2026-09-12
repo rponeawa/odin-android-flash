@@ -39,6 +39,7 @@ jobs:
             echo "publish=yes" >> "$GITHUB_OUTPUT"
           fi
   download-a:
+    # 只下前半；为什么分两半、为什么串行，见下面 download-b 的说明
     needs: check
     if: needs.check.outputs.publish == 'yes'
     runs-on: ubuntu-latest
@@ -66,7 +67,9 @@ jobs:
           compression-level: 0
           retention-days: 1
   download-b:
-    # 串在 a 之后：两半同时从同一个 Mega 账号拉会撞流量限制
+    # ROM 有 8 GB 出头，而 Mega 未登录时单次下载上限 5 GB，所以整包必须分成
+    # 两半分别下载，不能合成一个 job 一次拿完。串在 a 之后是为了不让两次下载
+    # 同时占用同一个账号的额度。
     needs: [check, download-a]
     if: needs.check.outputs.publish == 'yes'
     runs-on: ubuntu-latest
