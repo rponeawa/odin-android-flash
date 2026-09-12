@@ -53,7 +53,7 @@ const ZH = {
   pickTwrp: "选择本地 TWRP 镜像",
 
   collectTitle: "采集并提交授权",
-  collectText: "进入 TWRP 后，先在手机上滑动滑块允许调试，再点「选择设备」。",
+  collectText: "进入 TWRP 后，请滑动滑块，再点「选择设备」。",
   collectAction: "采集并提交授权",
 
   authFlashTitle: "刷入授权包",
@@ -187,8 +187,7 @@ const EN = {
   pickTwrp: "Choose a local TWRP image",
 
   collectTitle: "Collect and submit",
-  collectText:
-    "In TWRP, swipe the slider on the phone to allow debugging, then choose the device.",
+  collectText: "In TWRP, swipe the slider, then choose the device.",
   collectAction: "Collect and submit",
 
   authFlashTitle: "Flash authorization",
