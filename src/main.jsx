@@ -1049,14 +1049,14 @@ async function mockCollectorOutput() {
   throw new AppError("mockNeedsRequest");
 }
 
-function mockAdb() {
+function mockAdb(sideload = false) {
   const written = [];
   // 模拟采集程序把包写到手机上的文件，之后再拉回来
   const deviceFiles = new Map();
   return {
     mock: true,
     serial: "MOCK0DIN0000",
-    banner: { state: "recovery" },
+    banner: { state: sideload ? "sideload" : "recovery" },
     written,
     async sync() {
       return {
@@ -1361,7 +1361,7 @@ function App() {
             serial: "MOCK0DIN0000",
           });
         } else {
-          attachAdb(mockAdb());
+          attachAdb(mockAdb(needsSideload));
         }
         return;
       }
@@ -1375,6 +1375,12 @@ function App() {
           serial: usb.serialNumber || "",
         });
       } else {
+        // 手上那个模式不对，先放开再连新的
+        if (adb && !adbReady) {
+          await adb.close().catch(() => {});
+          setAdb(null);
+          setDevice(null);
+        }
         const found = await requestAdbDevice();
         if (!found) return;
         const device = await connectAdb(found);
@@ -1611,7 +1617,10 @@ function App() {
   const needsFastboot = view === "base" || view === "twrp";
   const needsAdb = view === "collect" || view === "auth" || view === "rom";
   const needsSideload = view === "auth" || view === "rom";
-  const deviceReady = needsFastboot ? !!fastboot : needsAdb ? !!adb : true;
+  // 光有 adb 不够：sideload 与普通 ADB 是不同的模式，选错模式的设备
+  // 不能让这一步的按钮亮起来
+  const adbReady = !!adb && isSideload(adb) === needsSideload;
+  const deviceReady = needsFastboot ? !!fastboot : needsAdb ? adbReady : true;
   // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
   // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
   // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作
