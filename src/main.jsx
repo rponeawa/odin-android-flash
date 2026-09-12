@@ -43,6 +43,10 @@ const NAV = {
 };
 
 const proxied = (url) => PROXY + encodeURIComponent(url);
+// adbd 在握手 banner 里报自己的状态。实测只有 sideload 是固定叫法，
+// 普通模式在不同 TWRP 上可能报 recovery、adb 或什么都不报。
+const isSideload = (device) => device?.banner?.state === "sideload";
+
 function adbMode(device) {
   const state = device?.banner?.state;
   if (state === "sideload") return "Recovery Sideload";
@@ -1382,9 +1386,7 @@ function App() {
         if (!found) return;
         const device = await connectAdb(found);
         // 模式不对就当场说清楚，别等真正发 sideload 时才失败
-        const mode = adbMode(device);
-        const wanted = needsSideload ? "Recovery Sideload" : "Recovery ADB";
-        if (mode !== wanted) {
+        if (isSideload(device) !== needsSideload) {
           await device.close().catch(() => {});
           throw new AppError(needsSideload ? "needSideload" : "needRecoveryAdb");
         }
