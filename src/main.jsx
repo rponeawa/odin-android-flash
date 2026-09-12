@@ -1056,9 +1056,10 @@ function mockAdb() {
       noneProtocol: {
         async spawn() {
           await wait(600);
-          deviceFiles.set("/tmp/request.zip", await mockCollectorOutput());
-          // stdout 被重定向到文件了，这里没有输出
-          return { output: new Blob([]).stream() };
+          // 真机是写到文件再把路径打到 stdout，这里照做
+          const path = "/tmp/request.zip";
+          deviceFiles.set(path, await mockCollectorOutput());
+          return { output: new Blob([path]).stream() };
         },
       },
     },
