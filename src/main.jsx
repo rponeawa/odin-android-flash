@@ -219,8 +219,7 @@ async function pushAndCollect(adb, gate, run) {
     () =>
       adb.subprocess.noneProtocol.spawn(["/tmp/qlp_collect", "qlp_flash"]),
   );
-  const path = (await new Response(proc.output).blob()).text().then((t) => t.trim());
-  const where = await path;
+  const where = (await new Response(proc.output).text()).trim();
   if (!where) throw new AppError("collectEmpty");
   const out = await run(`adb pull ${where}`, () =>
     new Response(sync.read(where)).blob(),
