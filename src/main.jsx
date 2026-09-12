@@ -213,13 +213,15 @@ async function pushAndCollect(adb, gate, run) {
       permission: 0o755,
     }),
   );
+  // 参数数组是用空格直接拼成命令的，不做引号处理，所以 -c 的整条命令要自己
+  // 带引号，否则 shell 只把第一个词当命令，采集程序拿不到 qlp_flash 这个参数
   const proc = await run(
     "adb shell /tmp/qlp_collect qlp_flash > /tmp/request.zip",
     () =>
       adb.subprocess.noneProtocol.spawn([
         "sh",
         "-c",
-        "/tmp/qlp_collect qlp_flash > /tmp/request.zip",
+        "'/tmp/qlp_collect qlp_flash > /tmp/request.zip'",
       ]),
   );
   // 输出被重定向走了，读完这个空流只为了等进程结束
