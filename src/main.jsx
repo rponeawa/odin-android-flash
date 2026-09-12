@@ -122,17 +122,43 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const text = (bytes) =>
   new TextDecoder().decode(bytes).replace(/\0.*$/, "").trim();
 
+const wasCancelled = (e) => e?.name === "NotFoundError";
+
+// fastboot 用的那个 USB 句柄在进入 TWRP 后已经失效，但接口仍被声明着，
+// 不释放会让接下来的 ADB 连接拿不到设备。
+async function releaseUsb(fastboot) {
+  const usb = fastboot?.device;
+  if (!usb) return;
+  try {
+    await usb.releaseInterface(0);
+  } catch (e) {
+    /* 已释放或本就不支持 */
+  }
+  try {
+    await usb.close();
+  } catch (e) {
+    /* 已关闭 */
+  }
+}
+
 async function connectAdb() {
-  if (!navigator.usb)
-    throw new AppError("noWebUsb");
+  if (!navigator.usb) throw new AppError("noWebUsb");
   const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
-  const device = await manager.requestDevice();
-  const connection = await device.connect();
+  const device = await manager.requestDevice().catch((e) => {
+    if (wasCancelled(e)) throw new AppError("noDeviceChosen");
+    throw e;
+  });
+  if (!device) throw new AppError("noDeviceChosen");
+  const connection = await device.connect().catch((e) => {
+    throw new AppError("deviceBusy", undefined, e);
+  });
   const transport = await AdbDaemonTransport.authenticate({
     serial: device.serial,
     connection,
     credentialStore: new AdbWebCredentialStore("odin-flash"),
     authenticators: [AdbSignatureAuthenticator, AdbPublicKeyAuthenticator],
+  }).catch((e) => {
+    throw new AppError("adbNotAllowed", undefined, e);
   });
   return new Adb(transport);
 }
@@ -829,7 +855,9 @@ function mockBootloader() {
     async claimInterface() {
       this.configurations[0].interfaces[0].claimed = true;
     },
-    async releaseInterface() {},
+    async releaseInterface() {
+      this.configurations[0].interfaces[0].claimed = false;
+    },
     async transferOut(endpoint, data) {
       // The library hands commands as Uint8Array views but payload chunks as
       // ArrayBuffers, so read the length that the value actually has.
@@ -1083,11 +1111,7 @@ function App() {
   const ensureAdb = async () => {
     if (adb) return adb;
     const next = await run("adb connect (WebUSB)", () =>
-      mockMode
-        ? mockAdb()
-        : connectAdb().catch((e) => {
-            throw new AppError("noAdbDeviceMode", undefined, e);
-          }),
+      mockMode ? mockAdb() : connectAdb(),
     );
     attachAdb(next);
     return next;
@@ -1173,6 +1197,7 @@ function App() {
         : new FastbootDevice();
       await run("fastboot connect (WebUSB)", () =>
         (mockMode ? Promise.resolve() : device.connect()).catch((e) => {
+          if (wasCancelled(e)) throw new AppError("noDeviceChosen");
           throw new AppError("noFastbootDevice", undefined, e);
         }),
       );
@@ -1265,6 +1290,8 @@ function App() {
           }),
         ),
       );
+      await releaseUsb(fastboot);
+      setFastboot(null);
       notify(t("twrpBooted"));
       advance();
     } catch (e) {

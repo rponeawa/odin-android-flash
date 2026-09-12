@@ -96,9 +96,11 @@ const ZH = {
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
   noOpfs: "当前浏览器不支持本地暂存，无法处理大文件。请使用 Chrome 或 Edge",
   noFastbootDevice:
-    "没有找到 Fastboot 设备。请让手机进入 Fastboot 后用数据线连接，并在弹出的窗口中选择设备",
-  noAdbDeviceMode:
-    "没有找到 ADB 设备。请确认 TWRP 已在对应模式，并在手机上允许这台电脑调试",
+    "找到了设备但无法连接。请关闭其他占用 USB 的程序（adb、Android File Transfer 等）后重试",
+  noDeviceChosen: "没有选择设备。请重新点击按钮，并在弹出的窗口里选择手机",
+  deviceBusy:
+    "找到了设备但无法连接。它可能被其他程序占用（adb、Android File Transfer），请关闭后重试",
+  adbNotAllowed: "手机没有允许这台电脑调试。请在手机上点「允许」后重试",
   notSideload:
     "设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload，滑动确认后重试",
   releasesFailed: "无法读取版本列表 HTTP {status}",
@@ -218,9 +220,13 @@ const EN = {
   noWebUsb: "This browser has no WebUSB. Use Chrome or Edge.",
   noOpfs: "This browser cannot stage files locally, so large packages cannot be handled. Use Chrome or Edge.",
   noFastbootDevice:
-    "No Fastboot device found. Put the phone in Fastboot, connect it by cable and pick it in the dialog.",
-  noAdbDeviceMode:
-    "No ADB device found. Check that TWRP is in the right mode and allow this computer on the phone.",
+    "Found the device but could not connect. Close other programs using it (adb, Android File Transfer) and try again.",
+  noDeviceChosen:
+    "No device was chosen. Press the button again and pick the phone in the dialog",
+  deviceBusy:
+    "Found the device but could not connect. Another program may hold it (adb, Android File Transfer); close it and try again",
+  adbNotAllowed:
+    "The phone did not allow this computer. Tap Allow on the phone and try again",
   notSideload:
     "The device is not in ADB Sideload. In TWRP choose Advanced - ADB Sideload, swipe to confirm and try again.",
   releasesFailed: "Could not read the release list, HTTP {status}",
