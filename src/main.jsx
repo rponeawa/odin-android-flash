@@ -1889,7 +1889,7 @@ function App() {
               <Select
                 value={rom?.id ? String(rom.id) : ""}
                 placeholder={t("selectVersion")}
-                disabled={blocked}
+                disabled={blocked || !!romFile}
                 options={releases.map((x) => ({
                   value: String(x.id),
                   label: x.name,
@@ -1903,7 +1903,7 @@ function App() {
                 accept=".zip"
                 file={romFile}
                 onPick={setRomFile}
-                disabled={blocked}
+                disabled={blocked || !!rom}
                 label={t("pickRom")}
               />
               <Actions
