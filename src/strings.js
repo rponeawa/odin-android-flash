@@ -16,7 +16,7 @@ const ZH = {
   modeFirst: "初次刷入",
   modeFirstText: "从官方底包开始，包含授权",
   modeUpdate: "更新",
-  modeUpdateText: "只刷入新的刷机包",
+  modeUpdateText: "只刷入新的 ROM",
   pause: "暂停",
   resume: "继续",
   skip: "跳过",
@@ -24,7 +24,7 @@ const ZH = {
   waiting: "等待操作",
   actionDownloadBase: "自动下载底包并刷入",
   actionDownloadTwrp: "自动下载 TWRP 并启动",
-  actionDownloadRom: "自动下载刷机包并刷入",
+  actionDownloadRom: "自动下载 ROM 并刷入",
   actionFlashSelected: "刷入选中",
   actionBootSelected: "启动选中",
   language: "English",
@@ -35,7 +35,7 @@ const ZH = {
   navTwrp: "TWRP",
   navAuth: "授权",
   navAuthFlash: "刷入授权",
-  navRom: "刷机包",
+  navRom: "ROM",
   navDone: "完成",
 
   connectTitle: "连接设备",
@@ -58,13 +58,13 @@ const ZH = {
   authFlashText: "先在 TWRP 中选择 高级 - ADB Sideload 并滑动确认。",
   authFlashAction: "刷入授权包",
 
-  romTitle: "自动刷入刷机包",
+  romTitle: "自动刷入 ROM",
   romText: "先在 TWRP 中选择 高级 - ADB Sideload 并滑动确认。",
   selectVersion: "选择版本",
-  pickRom: "选择本地刷机包",
+  pickRom: "选择本地 ROM",
 
   doneTitle: "完成",
-  doneText: "刷机包已刷入。设备没有自动重启时，在 TWRP 中选择重启。",
+  doneText: "ROM 已刷入。设备没有自动重启时，在 TWRP 中选择重启。",
   home: "返回主页",
 
   busyConnectFastboot: "连接 Fastboot",
@@ -76,14 +76,14 @@ const ZH = {
   busySubmit: "提交授权",
   busyFlashAuth: "刷入授权包",
   busyFlashRom: "下载并刷入",
-  busyFlashLocalRom: "刷入本地刷机包",
+  busyFlashLocalRom: "刷入本地 ROM",
 
   progDownloadTwrp: "下载 TWRP",
   progUploadTwrp: "上传 TWRP",
   progUploadRequest: "上传授权请求",
   progDownloadAuth: "下载授权包",
   progFlashAuth: "刷入授权包",
-  progFlashRom: "下载并刷入刷机包",
+  progFlashRom: "下载并刷入 ROM",
   progFlash: "刷入 {partition} {index}",
   progErase: "擦除 {partition} {index}",
   progSlot: "切换槽位 {slot} {index}",
@@ -94,7 +94,7 @@ const ZH = {
   twrpBooted: "TWRP 已启动，请等待 ADB",
   gotAuth: "已取得 {name}，请在 TWRP 中选择 高级 - ADB Sideload",
   authFlashed: "授权包已刷入",
-  romFlashed: "刷机包已刷入",
+  romFlashed: "ROM 已刷入",
   logError: "错误 {detail}",
 
   noWebUsb: "当前浏览器不支持 WebUSB，请使用 Chrome 或 Edge",
@@ -121,10 +121,10 @@ const ZH = {
   authTimeout: "授权请求超时",
   authNoPackage: "授权服务未返回授权包",
   sideloadClosed: "sideload 连接已断开",
-  sideloadReject: "TWRP 拒绝刷机包",
+  sideloadReject: "TWRP 拒绝 ROM",
   sideloadBadBlock: "sideload 返回无效块号 {cmd}",
   sideloadRange: "sideload 请求超出文件范围",
-  romOffset: "刷机包偏移超出分卷范围",
+  romOffset: "ROM 偏移超出分卷范围",
 };
 
 const EN = {

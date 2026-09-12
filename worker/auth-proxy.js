@@ -1,4 +1,5 @@
-const UPSTREAM = "https://file.xkji.com/xiaomi/api/issue";
+const SERVICE = "https://file.xkji.com";
+const UPSTREAM = `${SERVICE}/xiaomi/api/issue`;
 const RELEASES =
   "https://api.github.com/repos/rponeawa/odin-android-flash/releases";
 const RELEASES_TTL = 600;
@@ -68,9 +69,11 @@ async function download(request, url) {
   if (request.method !== "GET" && request.method !== "HEAD")
     return new Response("Method Not Allowed", { status: 405, headers: cors() });
   const target = url.searchParams.get("url");
+  // The service answers with a path like /api/download/<token>, relative to
+  // its own origin, so a bare path is resolved against the service.
   let parsed;
   try {
-    parsed = new URL(target);
+    parsed = target?.startsWith("/") ? new URL(target, SERVICE) : new URL(target);
   } catch {
     return new Response("Invalid url", { status: 400, headers: cors() });
   }

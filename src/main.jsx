@@ -1085,7 +1085,7 @@ function App() {
   ) : null;
   const flow = FLOWS[mode] || [];
   const view = flow[step];
-  const fallback = { label: busy || t("waiting"), done: 0, total: 1 };
+  const fallback = { label: busy || t("waiting") };
   const dark = theme ? theme === "dark" : systemDark;
   return (
     <>
@@ -1560,6 +1560,12 @@ function Actions({ onClick, disabled, children, extra }) {
   );
 }
 function Progress({ label, done, total, speed }) {
+  if (total === undefined)
+    return (
+      <div className="progress">
+        <div>{label}</div>
+      </div>
+    );
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const display = total
     ? `${percent}%`
