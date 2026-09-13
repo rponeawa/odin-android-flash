@@ -168,13 +168,29 @@ async function requestAdbDevice() {
 
 // fastboot 用的那个 USB 句柄在进入 TWRP 后已经失效，但接口仍被声明着，
 // 不释放会让接下来的 ADB 连接拿不到设备。
+// odin 的 bootloader 把 max-download-size 报成十进制的 805306368（768 MiB），
+// 而库按十六进制解析这个变量：parseInt("805306368", 16) 约 32 GiB，再被它自己
+// 的 1 GiB 上限截断。于是每块按 1 GiB 发送，超过设备实际接受的 768 MiB，
+// 刷大分区时报 Requested download size is more than max allowed。
+// 这里直接给它设备接受的上限，不去猜对方用的是哪种进制。
+const DOWNLOAD_SIZE = 768 * 1024 * 1024;
+
+function withDownloadSize(fastboot) {
+  const asked = fastboot.getVariable.bind(fastboot);
+  fastboot.getVariable = async (name) =>
+    name === "max-download-size"
+      ? DOWNLOAD_SIZE.toString(16)
+      : asked(name);
+  return fastboot;
+}
+
 // 直接接管已经拿到句柄的 USB 设备，不经过库的 connect：它数到不止一个
 // 已授权设备时会再弹一次选择窗口。
 async function attachFastboot(usb) {
   const fastboot = new FastbootDevice();
   fastboot.device = usb;
   await fastboot._validateAndConnectDevice();
-  return fastboot;
+  return withDownloadSize(fastboot);
 }
 
 async function releaseUsb(fastboot) {
