@@ -29,6 +29,8 @@ const ZH = {
   actionDownloadRom: "自动下载 ROM 并刷入",
   actionFlashSelected: "刷入选中",
   actionBootSelected: "启动选中",
+  actionFlashReady: "刷入已备好的包",
+  actionBootReady: "启动已备好的镜像",
   language: "English",
   theme: "深色模式",
 
@@ -108,7 +110,9 @@ const ZH = {
   needRecoveryAdb:
     "这个设备在 ADB Sideload 模式，而这一步需要 TWRP 的普通 ADB。请退出 Sideload 后重新选择设备",
   deviceBusy:
-    "找到了设备但无法连接。它可能被其他程序占用（adb、Android File Transfer），请关闭后重试",
+    "找到了设备但无法连接。多半是本机的 adb server 占着它，在终端运行 adb kill-server 后重试。Android File Transfer 一类的程序也要关掉",
+  nowFastboot: "包已备好。请确认设备在 Fastboot 模式，再点「选择设备」，然后重新点这个按钮",
+  nowSideload: "包已备好。请让设备进入 ADB Sideload，再点「选择设备」，然后重新点这个按钮",
   adbNotAllowed: "手机没有允许这台电脑调试。请在手机上点「允许」后重试",
   notSideload:
     "设备不在 ADB Sideload 模式。请在 TWRP 中选择 高级 - ADB Sideload，滑动确认后重试",
@@ -163,6 +167,8 @@ const EN = {
   actionDownloadRom: "Download and flash the ROM",
   actionFlashSelected: "Flash selected",
   actionBootSelected: "Boot selected",
+  actionFlashReady: "Flash the prepared package",
+  actionBootReady: "Boot the prepared image",
   language: "中文",
   theme: "Dark mode",
 
@@ -243,7 +249,11 @@ const EN = {
   needRecoveryAdb:
     "That device is in ADB Sideload, but this step needs TWRP's ordinary ADB. Leave Sideload and choose the device again",
   deviceBusy:
-    "Found the device but could not connect. Another program may hold it (adb, Android File Transfer); close it and try again",
+    "Found the device but could not connect. The local adb server is usually holding it: run adb kill-server in a terminal and try again. Close Android File Transfer and similar programs too",
+  nowFastboot:
+    "The package is ready. Put the device in Fastboot, tap Choose device, then press this button again",
+  nowSideload:
+    "The package is ready. Put the device in ADB Sideload, tap Choose device, then press this button again",
   adbNotAllowed:
     "The phone did not allow this computer. Tap Allow on the phone and try again",
   notSideload:

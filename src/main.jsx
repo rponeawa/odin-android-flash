@@ -1140,6 +1140,9 @@ function App() {
   const [baseFile, setBaseFile] = useState(null);
   const [twrpFile, setTwrpFile] = useState(null);
   const [romFile, setRomFile] = useState(null);
+  // 备好但还没刷进去的材料。sideload 的连接有超时，几 GB 的下载不能让设备
+  // 在旁边等着，所以下载解压先做完，材料留在这里，等设备连上再刷。
+  const [staged, setStaged] = useState(null);
   const gate = useRef(createGate()).current;
   const toastId = useRef(0);
   const notify = (text, tone = "info") =>
@@ -1322,21 +1325,36 @@ function App() {
     }
   };
   const flashBase = async () => {
-    if (!fastboot) return;
-    begin(baseFile ? "busyReadLocalBase" : "busyDownloadBase", !baseFile);
+    let ready = staged?.view === "base" ? staged : null;
+    begin(
+      ready ? "busyFlashBase" : baseFile ? "busyReadLocalBase" : "busyDownloadBase",
+      !ready && !baseFile,
+    );
     try {
-      await clearStorage();
-      const archive =
-        baseFile ||
-        (await downloadToFile(BASE, "base.tgz", (done, total, speed) =>
-          setProgress({ label: t("busyDownloadBase"), done, total, speed }),
-        gate));
-      phase("busyUnpackBase");
-      const { files, scriptName, scriptText } = await extractBasePackage(
-        archive,
-        (done) =>
-          setProgress({ label: t("busyUnpackBase"), done, total: 0 }),
-      );
+      if (!ready) {
+        await clearStorage();
+        const archive =
+          baseFile ||
+          (await downloadToFile(BASE, "base.tgz", (done, total, speed) =>
+            setProgress({ label: t("busyDownloadBase"), done, total, speed }),
+          gate));
+        phase("busyUnpackBase");
+        const { files, scriptName, scriptText } = await extractBasePackage(
+          archive,
+          (done) =>
+            setProgress({ label: t("busyUnpackBase"), done, total: 0 }),
+        );
+        const steps = parseFlashScript(scriptText);
+        if (!steps.length)
+          throw new AppError("baseNoCommands", { script: SCRIPT });
+        ready = { view: "base", files, scriptName, scriptText, steps };
+        setStaged(ready);
+      }
+      if (!fastboot) {
+        notify(t("nowFastboot"));
+        return;
+      }
+      const { files, scriptName, scriptText, steps } = ready;
       const root = scriptName.slice(0, scriptName.length - SCRIPT.length);
       const resolve = async (file) => {
         if (file === SCRIPT) return scriptText;
@@ -1344,8 +1362,6 @@ function App() {
         if (!handle) throw new AppError("baseMissingFile", { file });
         return handle.getFile();
       };
-      const steps = parseFlashScript(scriptText);
-      if (!steps.length) throw new AppError("baseNoCommands", { script: SCRIPT });
       phase("busyFlashBase");
       const onFlash = (label, p) =>
         setProgress({ label, done: Math.round(p * 1000), total: 1000 });
@@ -1358,6 +1374,7 @@ function App() {
         t("busyFlashBase"),
       );
       notify(t("baseFlashed", { script: SCRIPT, count: steps.length }));
+      setStaged(null);
       await clearStorage();
       advance();
     } catch (e) {
@@ -1423,18 +1440,27 @@ function App() {
     advance();
   };
   const bootTwrp = async () => {
-    if (!fastboot) return;
-    begin("busyDownloadTwrp", !twrpFile);
+    let ready = staged?.view === "twrp" ? staged : null;
+    begin(ready ? "busyBootTwrp" : "busyDownloadTwrp", !ready && !twrpFile);
     try {
-      const blob =
-        twrpFile ||
-        (await downloadToFile(
-          TWRP,
-          "twrp.img",
-          (done, total, speed) =>
-            setProgress({ label: t("busyDownloadTwrp"), done, total, speed }),
-          gate,
-        ));
+      if (!ready) {
+        const image =
+          twrpFile ||
+          (await downloadToFile(
+            TWRP,
+            "twrp.img",
+            (done, total, speed) =>
+              setProgress({ label: t("busyDownloadTwrp"), done, total, speed }),
+            gate,
+          ));
+        ready = { view: "twrp", blob: image };
+        setStaged(ready);
+      }
+      if (!fastboot) {
+        notify(t("nowFastboot"));
+        return;
+      }
+      const blob = ready.blob;
       phase("busyBootTwrp");
       await run(`fastboot boot <${twrpFile?.name || "qlp_twrp.img"}>`, () =>
         fastboot.bootBlob(blob, (p) =>
@@ -1449,6 +1475,7 @@ function App() {
       await releaseUsb(fastboot);
       setFastboot(null);
       setDevice(null);
+      setStaged(null);
       notify(t("twrpBooted"));
       advance();
     } catch (e) {
@@ -1516,85 +1543,83 @@ function App() {
     }
   };
   const flash = async () => {
-    if (!adb || (!rom && !romFile)) return;
-    begin(romFile ? "busyFlashLocalRom" : "busyDownloadRom");
+    let ready = staged?.view === "rom" ? staged : null;
+    if (!ready && !rom && !romFile) return;
+    begin(
+      ready ? "busyFlashRom" : romFile ? "busyFlashLocalRom" : "busyDownloadRom",
+      !ready && !romFile,
+    );
     try {
-      if (!adb) return;
-      if (romFile) {
-        const started = performance.now();
-        await run(`adb sideload ${romFile.name}`, () =>
-          asSideload(() =>
-            sendSideload(
-              adb,
-              romFile,
-            (done, total) => {
-              const elapsed = performance.now() - started - gate.pausedMs;
-              setProgress({
-                label: t("busyFlashLocalRom"),
-                done,
-                total,
-                speed: done / Math.max(0.001, elapsed / 1000),
-              });
-            },
-              romFile.size,
-              gate,
-            ),
-          ),
-        );
-        await reboot(adb);
-        await clearStorage();
-        advance();
-        notify(t("romFlashed"));
+      if (!ready) {
+        if (romFile) {
+          ready = { view: "rom", blob: romFile, name: romFile.name };
+        } else {
+          const assets = rom.assets
+            .filter((a) => /\.part-[ab]-\d+$/.test(a.name))
+            .sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { numeric: true }),
+            );
+          const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
+          phase("busyDownloadRom", true);
+          let downloaded = 0;
+          const parts = [];
+          for (const asset of assets) {
+            const base = downloaded;
+            parts.push(
+              await downloadToFile(
+                asset.browser_download_url,
+                asset.name,
+                (done, partTotal, speed) =>
+                  setProgress({
+                    label: t("busyDownloadRom"),
+                    done: base + done,
+                    total,
+                    speed,
+                  }),
+                gate,
+              ),
+            );
+            downloaded += Number(asset.size || 0);
+          }
+          // File 也是 Blob，跨分卷的切片的由浏览器处理，不必自己拼接
+          const source = new Blob(parts);
+          if (source.size !== total)
+            throw new AppError("romSizeMismatch", {
+              got: source.size,
+              want: total,
+            });
+          ready = { view: "rom", blob: source, name: rom.name };
+        }
+        setStaged(ready);
+      }
+      if (!adbReady) {
+        notify(t("nowSideload"));
         return;
       }
-      const assets = rom.assets
-        .filter((a) => /\.part-[ab]-\d+$/.test(a.name))
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, undefined, { numeric: true }),
-        );
-      const total = assets.reduce((n, a) => n + Number(a.size || 0), 0);
-      phase("busyDownloadRom", true);
-      let downloaded = 0;
-      const parts = [];
-      for (const asset of assets) {
-        const base = downloaded;
-        parts.push(
-          await downloadToFile(
-            asset.browser_download_url,
-            asset.name,
-            (done, partTotal, speed) =>
-              setProgress({
-                label: t("busyDownloadRom"),
-                done: base + done,
-                total,
-                speed,
-              }),
-            gate,
-          ),
-        );
-        downloaded += Number(asset.size || 0);
-      }
-      // File 也是 Blob，跨分卷的切片的由浏览器处理，不必自己拼接
-      const source = new Blob(parts);
-      if (source.size !== total)
-        throw new AppError("romSizeMismatch", {
-          got: source.size,
-          want: total,
-        });
+      const { blob, name } = ready;
+      const started = performance.now();
       phase("busyFlashRom");
-      await run(`adb sideload ${rom.name}`, () =>
+      await run(`adb sideload ${name}`, () =>
         asSideload(() =>
           sendSideload(
             adb,
-            source,
-            (done, all) =>
-              setProgress({ label: t("busyFlashRom"), done, total: all }),
-            total,
+            blob,
+            (done, all) => {
+              const elapsed = performance.now() - started - gate.pausedMs;
+              setProgress({
+                label: t("busyFlashRom"),
+                done,
+                total: all,
+                speed: done / Math.max(0.001, elapsed / 1000),
+              });
+            },
+            blob.size,
             gate,
           ),
         ),
       );
       await reboot(adb);
+      setStaged(null);
       await clearStorage();
       advance();
       notify(t("romFlashed"));
@@ -1616,6 +1641,7 @@ function App() {
     setBaseFile(null);
     setTwrpFile(null);
     setRomFile(null);
+    setStaged(null);
     setFastboot(null);
     setAdb(null);
     setRom(null);
@@ -1645,7 +1671,11 @@ function App() {
   // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
   // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
   // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作
-  const blocked = !!busy || !deviceReady;
+  // 这几步先备料再要设备，所以没有设备也要能点：下载解压跑完了才提示连接。
+  // 其余步骤没有可备的材料，手上没有对的设备就只留选择设备一个按钮。
+  const stagesFirst = view === "base" || view === "twrp" || view === "rom";
+  const stagedHere = staged?.view === view ? staged : null;
+  const blocked = !!busy || (!deviceReady && !stagesFirst);
   const deviceButton =
     view === "collect" || view === "rom" || !deviceReady ? (
       <button
@@ -1803,7 +1833,7 @@ function App() {
                 accept=".tgz,.gz,application/gzip"
                 file={baseFile}
                 onPick={setBaseFile}
-                disabled={blocked}
+                disabled={blocked || !!stagedHere}
                 label={t("pickBase")}
               />
               <Actions
@@ -1826,9 +1856,11 @@ function App() {
                 disabled={blocked}
               >
                 {busy ||
-                  (baseFile
-                    ? t("actionFlashSelected")
-                    : t("actionDownloadBase"))}
+                  (stagedHere
+                    ? t("actionFlashReady")
+                    : baseFile
+                      ? t("actionFlashSelected")
+                      : t("actionDownloadBase"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1841,7 +1873,7 @@ function App() {
                 accept=".img"
                 file={twrpFile}
                 onPick={setTwrpFile}
-                disabled={blocked}
+                disabled={blocked || !!stagedHere}
                 label={t("pickTwrp")}
               />
               <Actions
@@ -1855,9 +1887,11 @@ function App() {
                 disabled={blocked}
               >
                 {busy ||
-                  (twrpFile
-                    ? t("actionBootSelected")
-                    : t("actionDownloadTwrp"))}
+                  (stagedHere
+                    ? t("actionBootReady")
+                    : twrpFile
+                      ? t("actionBootSelected")
+                      : t("actionDownloadTwrp"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
@@ -1910,7 +1944,7 @@ function App() {
               <Select
                 value={rom?.id ? String(rom.id) : ""}
                 placeholder={t("selectVersion")}
-                disabled={blocked || !!romFile}
+                disabled={blocked || !!romFile || !!stagedHere}
                 options={releases.map((x) => ({
                   value: String(x.id),
                   label: x.name,
@@ -1924,7 +1958,7 @@ function App() {
                 accept=".zip"
                 file={romFile}
                 onPick={setRomFile}
-                disabled={blocked || !!rom}
+                disabled={blocked || !!rom || !!stagedHere}
                 label={t("pickRom")}
               />
               <Actions
@@ -1935,12 +1969,14 @@ function App() {
                   </>
                 }
                 onClick={flash}
-                disabled={blocked || (!rom && !romFile)}
+                disabled={blocked || (!stagedHere && !rom && !romFile)}
               >
                 {busy ||
-                  (romFile
-                    ? t("actionFlashSelected")
-                    : t("actionDownloadRom"))}
+                  (stagedHere
+                    ? t("actionFlashReady")
+                    : romFile
+                      ? t("actionFlashSelected")
+                      : t("actionDownloadRom"))}
               </Actions>
               <Progress {...(progress || fallback)} />
             </Panel>
