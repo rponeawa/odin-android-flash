@@ -1899,7 +1899,6 @@ function App() {
         )}
         {view === "collect" && (
           <Page title={t("collectTitle")} icon="vpn_key">
-            <p>{t("collectText")}</p>
             <Panel>
               <Actions
                 extra={
