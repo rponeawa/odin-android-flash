@@ -596,7 +596,11 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   }
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
+  // 设备按自己的次序要块，第一个请求通常落在 zip 末尾的中央目录，所以最大
+  // 偏移一开始就接近全长，拿它当进度会立刻显示 100%。进度按实际发出的字节
+  // 算，最大偏移只留给出错时说明设备读到哪里。
   let sent = 0;
+  let moved = 0;
   let pending = new Uint8Array();
   const readExact = async (n) => {
     while (pending.length < n) {
@@ -639,7 +643,8 @@ async function sendSideload(adb, source, onProgress, total, gate) {
       throw new AppError("sideloadShort", { block, got: data.length, want: len });
     await writer.write(data);
     sent = Math.max(sent, offset + data.length);
-    onProgress(sent, total);
+    moved += data.length;
+    onProgress(moved, total);
   }
   await writer.close();
   await reader.cancel();
@@ -1520,8 +1525,8 @@ function App() {
           sendSideload(
             adb,
             issued.blob,
-            (done, total) =>
-              setProgress({ label: t("busyFlashAuth"), done, total }),
+            (done) =>
+              setProgress({ label: t("busyFlashAuth"), done, total: 0 }),
             issued.blob.size,
             gate,
           ),
@@ -1604,12 +1609,12 @@ function App() {
           sendSideload(
             adb,
             blob,
-            (done, all) => {
+            (done) => {
               const elapsed = performance.now() - started - gate.pausedMs;
               setProgress({
                 label: t("busyFlashRom"),
                 done,
-                total: all,
+                total: 0,
                 speed: done / Math.max(0.001, elapsed / 1000),
               });
             },
@@ -2241,7 +2246,7 @@ function Progress({ label, done, total, speed }) {
       <div
         className={`progress-track${total ? "" : " indeterminate"}`}
         role="progressbar"
-        aria-valuenow={percent}
+        aria-valuenow={total ? percent : undefined}
         aria-valuemin="0"
         aria-valuemax="100"
       >
