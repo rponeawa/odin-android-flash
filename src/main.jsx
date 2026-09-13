@@ -1670,7 +1670,9 @@ function App() {
   const deviceReady = needsFastboot ? !!fastboot : needsAdb ? adbReady : true;
   // 只有设备换过模式的步骤才放这个按钮：连接之后到 TWRP 启动前是同一个
   // fastboot 设备，不用重选。选好之后按钮留在原地置灰，不要忽隐忽现。
-  // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作
+  // 手上没有该步骤需要的设备时，除了选择设备按钮，其余一律不可操作。
+  // 备料的步骤在材料备好之前也点不动它：这一步要的是 sideload，而那时候
+  // 设备多半还在别的模式，连上只会被拒，何况它接着还要空等整个下载。
   // 这几步先备料再要设备，所以没有设备也要能点：下载解压跑完了才提示连接。
   // 其余步骤没有可备的材料，手上没有对的设备就只留选择设备一个按钮。
   const stagesFirst = view === "base" || view === "twrp" || view === "rom";
@@ -1682,7 +1684,7 @@ function App() {
         type="button"
         className="secondary"
         onClick={selectDevice}
-        disabled={!!busy || deviceReady}
+        disabled={!!busy || deviceReady || (stagesFirst && !stagedHere)}
       >
         <span className="material-icons">usb</span>
         {t("chooseDevice")}
