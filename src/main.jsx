@@ -1286,6 +1286,11 @@ function App() {
       const product = await run("fastboot getvar product", () =>
         device.getVariable("product"),
       );
+      // 分块刷写的大小由 bootloader 报的这个值决定，它不对就会在刷大分区时报
+      // "Requested download size is more than max allowed"
+      await run("fastboot getvar max-download-size", () =>
+        device.getVariable("max-download-size"),
+      );
       setFastboot(device);
       setDevice({
         mode: "Fastboot",
