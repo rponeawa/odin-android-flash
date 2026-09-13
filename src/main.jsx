@@ -294,6 +294,20 @@ async function opfsRoot() {
   return navigator.storage.getDirectory();
 }
 
+// 分卷在不同 release 之间同名（都叫 odin-rom.zip.part-a-000），OPFS 里靠
+// release 前缀区分，换版本时把别人的分卷删掉，不然 8 GB 白占着。
+async function dropStaleParts(keep) {
+  const root = await opfsRoot();
+  for await (const name of root.keys()) {
+    if (!/\.part-[ab]-\d+$/.test(name) || name.startsWith(keep)) continue;
+    try {
+      await root.removeEntry(name);
+    } catch (e) {
+      /* 已被移除 */
+    }
+  }
+}
+
 async function clearStorage() {
   const root = await opfsRoot();
   for await (const name of root.keys()) {
@@ -307,12 +321,24 @@ async function clearStorage() {
 
 // 唯一的下载路径。流式写进 OPFS，中断时按已写入的字节数接着下。
 // 返回 File，它本身就是 Blob，可以直接交给 fastboot 和 sideload。
-async function downloadToFile(url, name, onProgress, gate) {
+// expected 是这个文件应有的字节数。给了它，OPFS 里已经躺着的字节就能接着
+// 用：刷新页面丢掉的只是页面对下载的记忆，文件本身还在。大小正好就不用再
+// 下，短了就从断口续，长了说明不是同一份，从头来。不给 expected 的调用无从
+// 判断已有内容是完整还是半截，仍旧重下。
+async function downloadToFile(url, name, onProgress, gate, expected) {
   const root = await opfsRoot();
   const handle = await root.getFileHandle(name, { create: true });
   const started = performance.now();
   const report = throttled(onProgress);
   let written = 0;
+  if (expected > 0) {
+    const have = (await handle.getFile()).size;
+    if (have === expected) {
+      onProgress?.(have, expected, 0);
+      return await handle.getFile();
+    }
+    if (have < expected) written = have;
+  }
   let total = 0;
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1559,6 +1585,7 @@ function App() {
         if (romFile) {
           ready = { view: "rom", blob: romFile, name: romFile.name };
         } else {
+          await dropStaleParts(`${rom.id}-`);
           const assets = rom.assets
             .filter((a) => /\.part-[ab]-\d+$/.test(a.name))
             .sort((a, b) =>
@@ -1573,7 +1600,7 @@ function App() {
             parts.push(
               await downloadToFile(
                 asset.browser_download_url,
-                asset.name,
+                `${rom.id}-${asset.name}`,
                 (done, partTotal, speed) =>
                   setProgress({
                     label: t("busyDownloadRom"),
@@ -1582,6 +1609,7 @@ function App() {
                     speed,
                   }),
                 gate,
+                Number(asset.size || 0),
               ),
             );
             downloaded += Number(asset.size || 0);
