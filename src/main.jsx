@@ -746,18 +746,19 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
     reading += gotData - gotAsk;
     writing += sentData - gotData;
     blocks += 1;
-    if (blocks % 100 === 0)
-      note?.(
-        `${blocks} 块 ${(moved / 1048576).toFixed(0)} MB` +
-          ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
-          ` 读盘 ${(reading / 1000).toFixed(1)}s` +
-          ` 发送 ${(writing / 1000).toFixed(1)}s` +
-          ` | 预读命中 ${hits}/${blocks}`,
-      );
     sent = Math.max(sent, offset + data.length);
     moved += data.length;
     onProgress(moved, total);
   }
+  // 慢的时候要能说清慢在哪一段：等设备开口、从盘上取这一块、把它写出去
+  if (blocks)
+    note?.(
+      `sideload 完成 ${blocks} 块 ${(moved / 1048576).toFixed(0)} MiB` +
+        ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
+        ` 读盘 ${(reading / 1000).toFixed(1)}s` +
+        ` 发送 ${(writing / 1000).toFixed(1)}s` +
+        ` | 预读命中 ${hits}/${blocks}`,
+    );
   await writer.close();
   await reader.cancel();
   await socket.close();
