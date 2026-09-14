@@ -25,13 +25,14 @@ const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
 const STALL = 30000;
-// sideload 块大小。设备每要一块就是一个来回，而经 WebUSB 走一个来回要七次
-// transferOut/transferIn，每次都跨进程，比原生 adb 直接提交 URB 贵得多。AOSP
-// 的 adb 用 64 KiB（adb.h: CHUNK_SIZE），8.3 GB 就是 13.6 万块、约 95 万次传输。
-// 设备侧允许的范围是 4 KiB 到 4 MiB，且总块数不超过 262144（recovery 的
-// fuse_sideload.cpp），1 MiB 落在里面，块数降到八千五。超出范围时设备会直接
-// 拒绝这次 sideload，不会写坏东西。
-const BLOCK = 1024 * 1024;
+// sideload 块大小，取设备允许的上限。设备每要一块就是一个来回，而经 WebUSB
+// 走一次传输要跨进程，比原生 adb 直接提交 URB 贵得多，所以块数才是成本。
+// 设备侧允许 4 KiB 到 4 MiB、总块数不超过 262144（recovery 的
+// fuse_sideload.cpp），超出范围会被当场拒绝，不会写进去半个包。
+// 8.3 GB 的包按 64 KiB（AOSP adb 的 CHUNK_SIZE）是 13.6 万块约 95 万次传输，
+// 按 4 MiB 是 2126 块约 4 万次。降幅小于块数之比：ADB 单个 WRTE 的载荷上限是
+// 协商出来的（Android 9 起 1 MiB），4 MiB 一块要拆成四个 WRTE 分别收 OKAY。
+const BLOCK = 4 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 const FLOWS = {
   full: ["connect", "base", "twrp", "collect", "auth", "rom", "done"],
@@ -687,7 +688,7 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
     reading += gotData - gotAsk;
     writing += sentData - gotData;
     blocks += 1;
-    if (blocks % 500 === 0)
+    if (blocks % 100 === 0)
       note?.(
         `${blocks} 块 ${(moved / 1048576).toFixed(0)} MB` +
           ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
