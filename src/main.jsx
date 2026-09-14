@@ -31,7 +31,9 @@ const STALL = 30000;
 // fuse_sideload.cpp），超出范围会被当场拒绝，不会写进去半个包。
 // 8.3 GB 的包按 64 KiB（AOSP adb 的 CHUNK_SIZE）是 13.6 万块约 95 万次传输，
 // 按 4 MiB 是 2126 块约 4 万次。降幅小于块数之比：ADB 单个 WRTE 的载荷上限是
-// 协商出来的（Android 9 起 1 MiB），4 MiB 一块要拆成四个 WRTE 分别收 OKAY。
+// 协商出来的（Android 9 起 1 MiB），4 MiB 一块要拆成四个 WRTE，每个都带自己的
+// 头、载荷和零长包。设备支持 delayed_ack 时这四个能连着发，否则一次只能有一个
+// 在途，发完要等 OKAY 才能发下一个。
 const BLOCK = 4 * 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 const FLOWS = {
@@ -626,6 +628,19 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
   } catch (e) {
     throw new AppError("notSideload", undefined, e);
   }
+  // 一个 WRTE 的载荷上限和能不能不等 OKAY 连着发，都是握手时谈出来的，决定了
+  // 每块要走几个来回。谈成什么样只有连上才知道，记一行。
+  const payloadCap = adb.transport?.maxPayloadSize;
+  const features = adb.banner?.features;
+  if (payloadCap && features)
+    note?.(
+      `sideload 协商：单包上限 ${(payloadCap / 1024).toFixed(0)} KiB，` +
+        `delayed_ack ${
+          features.includes("delayed_ack")
+            ? "已启用，一块的几个包可以连着发"
+            : "设备不支持，每包发完都要等 OKAY"
+        }`,
+    );
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
   // 设备按自己的次序要块，第一个请求通常落在 zip 末尾的中央目录，所以最大
