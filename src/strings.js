@@ -68,7 +68,7 @@ const ZH = {
   pickRom: "选择本地 ROM",
 
   doneTitle: "完成",
-  doneText: "ROM 已刷入。请等待设备开机。",
+  doneText: "ROM 已刷入。请重启设备。",
   home: "返回主页",
 
   busyConnectFastboot: "连接中",
@@ -206,7 +206,7 @@ const EN = {
   pickRom: "Choose a local ROM",
 
   doneTitle: "Done",
-  doneText: "The ROM is flashed. Wait for the device to boot.",
+  doneText: "The ROM is flashed. Restart the device.",
   home: "Back to start",
 
   busyConnectFastboot: "Connecting",

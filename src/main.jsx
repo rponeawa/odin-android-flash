@@ -1174,11 +1174,6 @@ function mockAdb(sideload = false) {
         },
       },
     },
-    power: {
-      async reboot() {
-        await wait(300);
-      },
-    },
     async createSocket(service) {
       const chunks = String(service).split(":");
       return mockSideloadSocket(Number(chunks[1]) || 0);
@@ -1608,13 +1603,6 @@ function App() {
       finish();
     }
   };
-  const reboot = async (device) => {
-    try {
-      await run("adb reboot", () => device.power.reboot());
-    } catch (e) {
-      logFailure(e);
-    }
-  };
   const flash = async () => {
     let ready = staged?.view === "rom" ? staged : null;
     if (!ready && !rom && !romFile) return;
@@ -1694,7 +1682,6 @@ function App() {
           ),
         ),
       );
-      await reboot(adb);
       setStaged(null);
       await clearStorage();
       advance();
