@@ -663,23 +663,40 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
     return out;
   };
   // 每块的开销分三段：等设备来要、从 OPFS 取这一块、把它写出去。总时间看不出
-  // 是哪一段慢，分开记。
+  // 是哪一段慢，分开记。预读命中次数说明那一段藏掉了多少。
   let waiting = 0;
   let reading = 0;
   let writing = 0;
   let blocks = 0;
+  let hits = 0;
   const file = source instanceof Blob ? source : null;
-  const get = async (offset, len) => {
+  const get = (offset, len) => {
     if (file)
-      return new Uint8Array(
-        await file.slice(offset, offset + len).arrayBuffer(),
-      );
-    return source(offset, len);
+      return file
+        .slice(offset, offset + len)
+        .arrayBuffer()
+        .then((buffer) => new Uint8Array(buffer));
+    return Promise.resolve(source(offset, len));
   };
+  // 设备基本是顺着往下读，所以在把这一块发出去的同时，先把下一块从盘上取起来。
+  // 等它真开口要的时候数据已经在手上，磁盘的时间就藏进了 USB 的时间里。要的是
+  // 别的块就丢掉重取，代价只是白读一次。
+  let ahead = null;
+  const lengthAt = (offset) => Math.min(BLOCK, total - offset);
+  const prefetch = (block) => {
+    const offset = block * BLOCK;
+    const len = lengthAt(offset);
+    if (len <= 0) return null;
+    const promise = get(offset, len);
+    // 没被取用的预读也得有人收着，否则它失败时会变成未处理的拒绝
+    promise.catch(() => {});
+    return { block, promise };
+  };
+  const decoder = new TextDecoder();
   while (true) {
     await gate?.wait();
     const askedAt = performance.now();
-    const cmd = new TextDecoder().decode(await readExact(8));
+    const cmd = decoder.decode(await readExact(8));
     const gotAsk = performance.now();
     if (cmd === "DONEDONE") break;
     if (cmd === "FAILFAIL")
@@ -691,12 +708,21 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
     const block = Number(cmd);
     if (!Number.isInteger(block)) throw new AppError("sideloadBadBlock", { cmd });
     const offset = block * BLOCK;
-    const len = Math.min(BLOCK, total - offset);
+    const len = lengthAt(offset);
     if (len <= 0) throw new AppError("sideloadRange");
-    const data = await get(offset, len);
+    let incoming;
+    if (ahead?.block === block) {
+      incoming = ahead.promise;
+      hits += 1;
+    } else {
+      incoming = get(offset, len);
+    }
+    const data = await incoming;
     if (data.length !== len)
       throw new AppError("sideloadShort", { block, got: data.length, want: len });
     const gotData = performance.now();
+    // 先把下一块挂上，再发这一块，两件事才重叠得起来
+    ahead = prefetch(block + 1);
     await writer.write(data);
     const sentData = performance.now();
     waiting += gotAsk - askedAt;
@@ -708,7 +734,8 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
         `${blocks} 块 ${(moved / 1048576).toFixed(0)} MB` +
           ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
           ` 读盘 ${(reading / 1000).toFixed(1)}s` +
-          ` 发送 ${(writing / 1000).toFixed(1)}s`,
+          ` 发送 ${(writing / 1000).toFixed(1)}s` +
+          ` | 预读命中 ${hits}/${blocks}`,
       );
     sent = Math.max(sent, offset + data.length);
     moved += data.length;
