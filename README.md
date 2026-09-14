@@ -56,7 +56,7 @@ npm run deploy:worker
 `mega-sync.yml` 每 6 小时跑一次，筛选 Mega 公共文件夹里文件名含「秋城落叶」且非底包的最新文件：
 
 - `check` — 读文件名与大小，不下载。名字与已有 Release 的标题相同就结束，本轮不产生流量
-- `download-a` / `download-b` — 仅在名字是新的时运行。Mega 未登录时单次下载上限 5 GB，而 ROM 有 8 GB 出头，所以必须分两半下载，不能合成一次；两次串行是为了不让两笔下载同时占用账号额度
+- `download-a` / `download-b` — 仅在名字是新的时运行，并行。Mega 未登录时的下载额度按 IP 计，上限 5 GB，而 ROM 有 8 GB 出头。GitHub Actions 每个 job 都在各自全新的 runner 上跑，IP 互不相同，两半于是各自只吃自己那个 IP 的额度。必须是两个 job：合并成一个 job 的两个步骤，哪怕前后排开跑也是同一个 IP，第二半必然超额
 - `publish` — 两半齐了分卷发布为新的 Release，并核对两条 `rom-name.txt` 一致、总字节数等于 `check` 报出的大小
 
 服务器不承载刷机包流量。
