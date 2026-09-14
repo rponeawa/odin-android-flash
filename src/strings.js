@@ -30,6 +30,14 @@ const ZH = {
   actionFlashSelected: "刷入选中",
   actionBootSelected: "启动选中",
   actionFlashReady: "刷入已备好的包",
+  sideloadLink:
+    "sideload 协商：单包上限 {payload} KiB，delayed_ack {ack}，端点包长 {packet} 字节（{link}）",
+  sideloadAckOn: "已启用，一块的几个包可以连着发",
+  sideloadAckOff: "设备不支持，每包发完都要等 OKAY",
+  linkSuper: "SuperSpeed",
+  linkHigh: "高速 USB 2.0",
+  sideloadTiming:
+    "sideload 完成 {blocks} 块 {mib} MiB，等设备 {wait}s，读盘 {read}s，发送 {send}s，预读命中 {hits}/{blocks}",
   pickRomFirst: "请先选一个 ROM 版本，或选择本地文件",
   actionBootReady: "启动已备好的镜像",
   language: "English",
@@ -168,6 +176,14 @@ const EN = {
   actionFlashSelected: "Flash selected",
   actionBootSelected: "Boot selected",
   actionFlashReady: "Flash the prepared package",
+  sideloadLink:
+    "sideload negotiated: {payload} KiB per packet, delayed_ack {ack}, {packet}-byte endpoint ({link})",
+  sideloadAckOn: "on, a block's packets go out together",
+  sideloadAckOff: "unsupported, every packet waits for its OKAY",
+  linkSuper: "SuperSpeed",
+  linkHigh: "high speed, USB 2.0",
+  sideloadTiming:
+    "sideload sent {blocks} blocks, {mib} MiB, {wait}s waiting for the device, {read}s reading, {send}s sending, {hits}/{blocks} blocks already fetched",
   pickRomFirst: "Choose a ROM release, or pick a local file",
   actionBootReady: "Boot the prepared image",
   language: "中文",

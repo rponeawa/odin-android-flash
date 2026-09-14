@@ -644,19 +644,14 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
   // 每块要走几个来回。谈成什么样只有连上才知道，记一行。
   const payloadCap = adb.transport?.maxPayloadSize;
   const features = adb.banner?.features;
-  if (payloadCap && features)
+  if (payloadCap && features && adb.packetSize)
     note?.(
-      `sideload 协商：单包上限 ${(payloadCap / 1024).toFixed(0)} KiB，` +
-        `delayed_ack ${
-          features.includes("delayed_ack")
-            ? "已启用，一块的几个包可以连着发"
-            : "设备不支持，每包发完都要等 OKAY"
-        }` +
-        (adb.packetSize
-          ? `，端点包长 ${adb.packetSize} 字节（${
-              adb.packetSize >= 1024 ? "SuperSpeed" : "高速 USB 2.0"
-            }）`
-          : ""),
+      t("sideloadLink", {
+        payload: (payloadCap / 1024).toFixed(0),
+        ack: t(features.includes("delayed_ack") ? "sideloadAckOn" : "sideloadAckOff"),
+        packet: adb.packetSize,
+        link: t(adb.packetSize >= 1024 ? "linkSuper" : "linkHigh"),
+      }),
     );
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
@@ -753,11 +748,14 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
   // 慢的时候要能说清慢在哪一段：等设备开口、从盘上取这一块、把它写出去
   if (blocks)
     note?.(
-      `sideload 完成 ${blocks} 块 ${(moved / 1048576).toFixed(0)} MiB` +
-        ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
-        ` 读盘 ${(reading / 1000).toFixed(1)}s` +
-        ` 发送 ${(writing / 1000).toFixed(1)}s` +
-        ` | 预读命中 ${hits}/${blocks}`,
+      t("sideloadTiming", {
+        blocks,
+        mib: (moved / 1048576).toFixed(0),
+        wait: (waiting / 1000).toFixed(1),
+        read: (reading / 1000).toFixed(1),
+        send: (writing / 1000).toFixed(1),
+        hits,
+      }),
     );
   await writer.close();
   await reader.cancel();
