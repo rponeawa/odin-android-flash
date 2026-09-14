@@ -25,8 +25,13 @@ const GROUP_ID = "489658149";
 const COLLECT =
   "https://github.com/rponeawa/odin-android-flash/releases/download/tools-odin/qlp_collect";
 const STALL = 30000;
-// sideload 块大小。取值同 AOSP adb 的 SIDELOAD_HOST_BLOCK_SIZE (adb.h: CHUNK_SIZE)。
-const BLOCK = 64 * 1024;
+// sideload 块大小。设备每要一块就是一个来回，而经 WebUSB 走一个来回要七次
+// transferOut/transferIn，每次都跨进程，比原生 adb 直接提交 URB 贵得多。AOSP
+// 的 adb 用 64 KiB（adb.h: CHUNK_SIZE），8.3 GB 就是 13.6 万块、约 95 万次传输。
+// 设备侧允许的范围是 4 KiB 到 4 MiB，且总块数不超过 262144（recovery 的
+// fuse_sideload.cpp），1 MiB 落在里面，块数降到八千五。超出范围时设备会直接
+// 拒绝这次 sideload，不会写坏东西。
+const BLOCK = 1024 * 1024;
 const SCRIPT = "flash_all.sh";
 const FLOWS = {
   full: ["connect", "base", "twrp", "collect", "auth", "rom", "done"],
@@ -613,7 +618,7 @@ async function headHex(source) {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" ");
 }
 
-async function sendSideload(adb, source, onProgress, total, gate) {
+async function sendSideload(adb, source, onProgress, total, gate, note) {
   let socket;
   try {
     socket = await adb.createSocket(`sideload-host:${total}:${BLOCK}`);
@@ -641,6 +646,12 @@ async function sendSideload(adb, source, onProgress, total, gate) {
     pending = pending.slice(n);
     return out;
   };
+  // 每块的开销分三段：等设备来要、从 OPFS 取这一块、把它写出去。总时间看不出
+  // 是哪一段慢，分开记。
+  let waiting = 0;
+  let reading = 0;
+  let writing = 0;
+  let blocks = 0;
   const file = source instanceof Blob ? source : null;
   const get = async (offset, len) => {
     if (file)
@@ -651,7 +662,9 @@ async function sendSideload(adb, source, onProgress, total, gate) {
   };
   while (true) {
     await gate?.wait();
+    const askedAt = performance.now();
     const cmd = new TextDecoder().decode(await readExact(8));
+    const gotAsk = performance.now();
     if (cmd === "DONEDONE") break;
     if (cmd === "FAILFAIL")
       throw new AppError("sideloadReject", {
@@ -667,7 +680,20 @@ async function sendSideload(adb, source, onProgress, total, gate) {
     const data = await get(offset, len);
     if (data.length !== len)
       throw new AppError("sideloadShort", { block, got: data.length, want: len });
+    const gotData = performance.now();
     await writer.write(data);
+    const sentData = performance.now();
+    waiting += gotAsk - askedAt;
+    reading += gotData - gotAsk;
+    writing += sentData - gotData;
+    blocks += 1;
+    if (blocks % 500 === 0)
+      note?.(
+        `${blocks} 块 ${(moved / 1048576).toFixed(0)} MB` +
+          ` | 等设备 ${(waiting / 1000).toFixed(1)}s` +
+          ` 读盘 ${(reading / 1000).toFixed(1)}s` +
+          ` 发送 ${(writing / 1000).toFixed(1)}s`,
+      );
     sent = Math.max(sent, offset + data.length);
     moved += data.length;
     onProgress(moved, total);
@@ -1648,6 +1674,7 @@ function App() {
             },
             blob.size,
             gate,
+            logCommand,
           ),
         ),
       );
