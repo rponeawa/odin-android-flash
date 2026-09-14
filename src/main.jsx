@@ -216,6 +216,16 @@ async function releaseUsb(fastboot) {
   }
 }
 
+// 批量端点的包长就是这条链路的速度：高速 (USB 2.0) 是 512 字节，
+// SuperSpeed (USB 3.x) 是 1024。传输快到顶了还是没到，看这个数才有结论。
+function bulkPacketSize(usb) {
+  for (const iface of usb?.configuration?.interfaces || [])
+    for (const endpoint of iface.alternate?.endpoints || [])
+      if (endpoint.type === "bulk" && endpoint.direction === "out")
+        return endpoint.packetSize;
+  return 0;
+}
+
 async function connectAdb(device) {
   if (!navigator.usb) throw new AppError("noWebUsb");
   const connection = await device.connect().catch((e) => {
@@ -229,7 +239,9 @@ async function connectAdb(device) {
   }).catch((e) => {
     throw new AppError("adbNotAllowed", undefined, e);
   });
-  return new Adb(transport);
+  const adb = new Adb(transport);
+  adb.packetSize = bulkPacketSize(device.raw);
+  return adb;
 }
 
 // 采集程序把 zip 写到 stdout。让它重定向到手机上的文件再拉回来，而不是直接
@@ -639,7 +651,12 @@ async function sendSideload(adb, source, onProgress, total, gate, note) {
           features.includes("delayed_ack")
             ? "已启用，一块的几个包可以连着发"
             : "设备不支持，每包发完都要等 OKAY"
-        }`,
+        }` +
+        (adb.packetSize
+          ? `，端点包长 ${adb.packetSize} 字节（${
+              adb.packetSize >= 1024 ? "SuperSpeed" : "高速 USB 2.0"
+            }）`
+          : ""),
     );
   const writer = socket.writable.getWriter();
   const reader = socket.readable.getReader();
